@@ -4,6 +4,29 @@ A single-pane console for a Windows server estate and its Microsoft 365 tenant. 
 
 The short version: it pulls server metrics from Elasticsearch, identity and security data from Microsoft Graph, alerts from a Teams monitoring chat, and tickets from Jira — then rolls all of it into one web UI with scheduled reports and a chat assistant that can query across all of it.
 
+## Screenshots
+
+<table>
+<tr>
+<td align="center"><b>Login — light</b></td>
+<td align="center"><b>Login — dark</b></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/login-light.png" alt="Login page (light theme)" width="480"></td>
+<td><img src="docs/screenshots/login-dark.png" alt="Login page (dark theme)" width="480"></td>
+</tr>
+<tr>
+<td align="center"><b>Dashboard — light</b></td>
+<td align="center"><b>Dashboard — dark</b></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/dashboard-light.png" alt="Dashboard overview (light theme)" width="480"></td>
+<td><img src="docs/screenshots/dashboard-dark.png" alt="Dashboard overview (dark theme)" width="480"></td>
+</tr>
+</table>
+
+---
+
 ## What's inside
 
 ### Azure / Entra ID login
