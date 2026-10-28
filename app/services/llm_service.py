@@ -134,75 +134,26 @@ Analyze this Windows infrastructure capacity issue and provide structured remedi
 # Jira ticket generation pipeline
 # ─────────────────────────────────────────────────────────────────
 
-SUBSIDIARIES = {
-    "43502": "emaratech Group",
-    "43503": "emaratech G",
-    "43504": "emaratech Solutions",
-    "43505": "noqodi",
-    "43506": "Cybranytech",
-    "43507": "Emirates Real Estate Solutions",
-    "43508": "emaratech Egypt",
-    "43509": "Zajel",
-    "43481": "Others",
+# Jira customfield option IDs for subsidiary/business unit.
+# Replace these with the option IDs from your Jira instance
+# (Admin → Custom fields → find the subsidiary field → view options).
+SUBSIDIARIES: dict[str, str] = {
+    # "10001": "Head Office",
+    # "10002": "Regional Office",
+    # "10003": "Others",
 }
 
-# Key = Jira customfield_32404 option ID, Value = display name
+# Jira SR type option IDs — replace with option IDs from your Jira instance.
+# These map to the SR type custom field on your service request issue type.
 SR_TYPES: dict[str, str] = {
-    "38124": "IT Helpdesk",
-    "38125": "Back-up & Restore",
-    "38126": "Dashboards & Reporting",
-    "43697": "Database Patching - Prod",
-    "43698": "Database Patching - Non-Prod",
-    "43699": "Database BAU & Health check - Prod",
-    "43700": "Database BAU & Health check - Non-Prod",
-    "43701": "Goldengate Administration",
-    "43702": "Oracle cloud Administration",
-    "43703": "Database Audit (PCI DSS / PWC / FAA)",
-    "43704": "Vender engagement/meetings",
-    "43705": "User Access Reviews",
-    "43706": "GDRFA audits (DESC, FAD)",
-    "43707": "GDRFA project support: Data-Lake/Internal/Others",
-    "43708": "Database Pen/vulnerability/ Other Tests",
-    "43709": "Database Automation tasks",
-    "43710": "Database Backup and Restoration",
-    "43711": "Windows Server Operations (BAU & Health Checks)",
-    "43712": "Patching & Maintenance – Prod",
-    "43713": "Patching & Maintenance – Non-Prod",
-    "43714": "VDI / Remote Access Support",
-    "43715": "Windows / AD Access & Privileged Access (PAM)",
-    "43716": "Security Vulnerability Remediation",
-    "43717": "Audit Evidence Collection & Compliance Support",
-    "43718": "On Call Production Alert & Response",
-    "43719": "Logging & SIEM Onboarding / Support",
-    "43720": "Application Deployment & Configuration - Lower environment",
-    "43721": "Integration Connectivity & Access",
-    "43722": "DR / PROD Connectivity & Failover Support",
-    "43723": "Environment Provisioning & Maintenance",
-    "43724": "Performance Testing Support",
-    "43725": "DNS Provisioning",
-    "43726": "File Server / EFS / Sharepoint Access",
-    "43727": "New Mailbox / SMTP Configuration",
-    "43728": "Vendor Discussion",
-    "43729": "SOC Notification & Response",
-    "43730": "Password Reset & Unblock Access",
-    "43731": "EDR & Antivirus Tuning & Support",
-    "43732": "Software Installation",
-    "43733": "Group Policy Enforcement",
-    "43734": "Email Whitelisting & Moderation",
-    "43874": "Middleware - Patching/upgrade/migration- Prod",
-    "43875": "Middleware - Patching/upgrade/migration - Non-prod",
-    "43876": "Middleware - BAU Support - Prod",
-    "43877": "Middleware - BAU Support- Non-Prod",
-    "43878": "Middleware - Project meeting",
-    "43879": "Middleware - Application Onboarding",
-    "43880": "Middleware - Automation",
-    "43881": "Middleware - Performance tuning",
-    "43882": "Middleware - Vendor engagement",
-    "43474": "Monitoring & Observability",
-    "43475": "Centralized Log Management",
-    "43476": "Operational & Business Dashboards",
-    "43979": "Assets Transfer",
-    "44400": "Unix - BAU & Health Check",
+    # Common types for infrastructure teams — add your own IDs from Jira:
+    # "10100": "IT Helpdesk",
+    # "10101": "Back-up & Restore",
+    # "10102": "Windows Server Operations",
+    # "10103": "Patching & Maintenance",
+    # "10104": "Security Vulnerability Remediation",
+    # "10105": "On Call Production Alert & Response",
+    # "10106": "Monitoring & Observability",
 }
 
 
@@ -217,7 +168,10 @@ async def generate_jira_draft(summary: str) -> AsyncIterator[str]:
     """
     import json as _json
 
-    system = f"""You are a senior IT Service Management engineer at emaratech Group (UAE).
+    import app.config as _cfg
+    org_name = await _cfg.get("org.name", "Your Organisation")
+
+    system = f"""You are a senior IT Service Management engineer at {org_name}.
 Your job is to turn a brief issue summary into a complete, professional Jira Service Request.
 
 SUBSIDIARY OPTIONS — pick the most relevant numeric ID:
@@ -227,8 +181,8 @@ SR TYPE OPTIONS — pick the numeric ID that best matches the work:
 {_json.dumps(SR_TYPES, indent=2)}
 
 RULES:
-- Default subsidiary is "emaratech G" (43503) unless the summary names another entity.
-- For Windows server / infrastructure work choose IDs 43711–43734 range first.
+- Pick the subsidiary that best matches the context, or the first one listed as the default.
+- For Windows server / infrastructure work choose the most relevant SR type first.
 - Write the description as a fluent, professional engineer would write it — NOT bullet points, NOT robotic.
 - Description structure (flowing paragraphs, no headers):
     1. What is happening / what was observed.

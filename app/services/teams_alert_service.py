@@ -645,7 +645,8 @@ CloudPulse Live Data for {server}:
 
 
 # SR types offered to the LLM for alert tickets (subset of llm_service.SR_TYPES)
-_ALERT_SR_TYPE_IDS = ("43711", "43718", "43712", "43716", "43474", "38124")
+# IDs of SR types relevant to infrastructure alerts — update to match your Jira instance.
+_ALERT_SR_TYPE_IDS: tuple[str, ...] = tuple(llm.SR_TYPES.keys())
 
 
 async def generate_jira_draft(alert: dict) -> dict:
@@ -656,7 +657,12 @@ async def generate_jira_draft(alert: dict) -> dict:
     ig_data     = alert.get("ig_data") or {}
     sr_types    = {k: llm.SR_TYPES[k] for k in _ALERT_SR_TYPE_IDS if k in llm.SR_TYPES}
 
-    system = f"""You are a senior IT Service Management engineer at emaratech Group (UAE).
+    import app.config as _cfg
+    org_name = await _cfg.get("org.name", "Your Organisation")
+    default_sub_id   = next(iter(llm.SUBSIDIARIES), "")
+    default_sub_name = llm.SUBSIDIARIES.get(default_sub_id, "")
+
+    system = f"""You are a senior IT Service Management engineer at {org_name}.
 Create a Jira Service Request from an infrastructure alert.
 
 SUBSIDIARIES (pick most relevant):
@@ -671,8 +677,8 @@ Respond ONLY with valid JSON:
   "description": "<professional 3-4 paragraph description>",
   "sr_type_id": "<id>",
   "sr_type_name": "<name>",
-  "subsidiary_id": "43503",
-  "subsidiary_name": "emaratech G",
+  "subsidiary_id": "{default_sub_id}",
+  "subsidiary_name": "{default_sub_name}",
   "effort_hours": <number>
 }}"""
     user = f"""Target: {server}
@@ -694,10 +700,10 @@ CloudPulse snapshot:
     return {
         "summary":         f"{metric_type.replace('_', ' ').upper()} alert on {server}"[:80],
         "description":     analysis[:500] if analysis else "Infrastructure alert requiring investigation.",
-        "sr_type_id":      "43718",
-        "sr_type_name":    "On Call Production Alert & Response",
-        "subsidiary_id":   "43503",
-        "subsidiary_name": "emaratech G",
+        "sr_type_id":      next(iter(llm.SR_TYPES), ""),
+        "sr_type_name":    next(iter(llm.SR_TYPES.values()), "On Call Production Alert & Response"),
+        "subsidiary_id":   next(iter(llm.SUBSIDIARIES), ""),
+        "subsidiary_name": next(iter(llm.SUBSIDIARIES.values()), ""),
         "effort_hours":    1.0,
     }
 

@@ -59,7 +59,7 @@ async def send_capacity_alert(server: str, metric: str, value: float, details: s
     <tr><td style="padding:8px;color:#9ca3af">Value</td><td style="padding:8px;color:#ef4444;font-size:1.2em;font-weight:bold">{value:.1f}%</td></tr>
   </table>
   <pre style="background:#1e2540;padding:12px;border-radius:8px;font-size:12px;overflow-x:auto">{details}</pre>
-  <p style="color:#6b7280;font-size:12px;margin-top:16px">Sent by CloudPulse Platform · emaratech</p>
+  <p style="color:#6b7280;font-size:12px;margin-top:16px">Sent by CloudPulse Platform · {await cfg.get("org.name", "")}</p>
 </div></body></html>"""
     admin_email = await cfg.get("mail.from", "")
     return await send_alert_email(admin_email, subject, body_html)

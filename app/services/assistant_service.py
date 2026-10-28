@@ -27,6 +27,7 @@ from app.database import AsyncSessionLocal
 from app.services import graph_service as g
 from app.services import inventory_service as inv
 from app.services.llm_service import _get_llm_params
+import app.config as cfg
 
 log = logging.getLogger(__name__)
 GST = timezone(timedelta(hours=4))
@@ -599,7 +600,8 @@ def tool_specs() -> list[dict]:
 async def _system_prompt() -> str:
     projects = ", ".join(p["project"] for p in await inv.projects())
     now = datetime.now(GST).strftime("%A %d %B %Y %H:%M")
-    return f"""You are CloudPulse Assistant, the AI assistant inside CloudPulse — the Windows infrastructure & security operations platform of emaratech (UAE).
+    org_name = await cfg.get("org.name", "your organisation")
+    return f"""You are CloudPulse Assistant, the AI assistant inside CloudPulse — the Windows infrastructure & security operations platform of {org_name}.
 Current time: {now} GST (Asia/Dubai). Users are infrastructure, security and identity engineers.
 
 You can see: 241 monitored Windows servers (live metrics & processes from Elastic, daily capacity history, forecasts), the server inventory with projects ({projects}),

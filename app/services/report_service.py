@@ -31,7 +31,7 @@ import app.config as cfg
 log = logging.getLogger(__name__)
 GST = timezone(timedelta(hours=4))
 REPORTS_LOCK_ID = 86940020
-LOGO_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "static", "brand", "emaratech-logo.png")
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "static", "brand", "org-logo.png")
 EMAIL_ROW_LIMIT = 50
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1275,7 +1275,7 @@ _BASE_CSS = (
 )
 
 
-def render_html(d: dict, mode: str = "web", logo_src: str = "/static/brand/emaratech-logo.png",
+def render_html(d: dict, mode: str = "web", logo_src: str = "/static/brand/org-logo.png",
                 report_id: Optional[int] = None) -> str:
     """mode: 'web' (viewer with toolbar + CSV buttons) or 'email' (inline-only, row-limited)."""
     web = mode == "web"
@@ -1314,7 +1314,7 @@ def render_html(d: dict, mode: str = "web", logo_src: str = "/static/brand/emara
 <tr><td style="height:6px;background:linear-gradient(90deg,{INK},{AQUA_DK},{AQUA});background-color:{AQUA_DK}"></td></tr>
 <tr><td style="padding:22px 32px 14px">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td style="vertical-align:middle"><img src="{logo_src}" alt="emaratech" height="34" style="height:34px;display:block;border:0"></td>
+    <td style="vertical-align:middle"><img src="{logo_src}" alt="Organisation logo" height="34" style="height:34px;display:block;border:0"></td>
     <td align="right" style="vertical-align:middle;font:600 11px {_FONT};letter-spacing:1.2px;text-transform:uppercase;color:{AQUA_DK}">
       CloudPulse Platform<br><span style="color:{MUTED};letter-spacing:.4px;text-transform:none;font-weight:400">{E(d.get('category') or 'Report')}</span></td>
   </tr></table>
@@ -1330,7 +1330,7 @@ def render_html(d: dict, mode: str = "web", logo_src: str = "/static/brand/emara
   <ul style="margin:0;padding-left:18px;font:13px {_FONT};color:{INK};line-height:1.5">{highlights}</ul></div></td></tr>''' if highlights else ''}
 <tr><td style="padding:0 32px 26px">{sections}</td></tr>
 <tr><td style="padding:14px 32px;background:{ZEBRA};border-top:1px solid {LINE};font:11.5px {_FONT};color:{MUTED}">
-  Confidential — for internal use by emaratech. Generated automatically by CloudPulse Platform.
+  Confidential — for internal use only. Generated automatically by CloudPulse Platform.
 </td></tr>
 </table></td></tr></table>{script}</body></html>"""
 
@@ -1365,12 +1365,12 @@ async def email_report(d: dict, recipients: list[str], report_id: Optional[int])
     if not recipients:
         return "not sent (no recipients)"
     logo = open(LOGO_PATH, "rb").read() if os.path.exists(LOGO_PATH) else None
-    body = render_html(d, "email", logo_src="cid:emaratech-logo" if logo else "", report_id=report_id)
+    body = render_html(d, "email", logo_src="cid:org-logo" if logo else "", report_id=report_id)
     attachments = [(_csv_name(s, i), csv_bytes(s)) for i, s in enumerate(d.get("sections") or [])
                    if s["kind"] == "table" and s.get("rows")]
     subject = f"Windows Ops · {d['title']} · {datetime.now(GST):%d %b %Y}"
     r = await mail_service.send_report_email(recipients, subject, body,
-                                             inline_images={"emaratech-logo": logo} if logo else None,
+                                             inline_images={"org-logo": logo} if logo else None,
                                              attachments=attachments)
     return f"sent to {len(recipients)}" if r.get("ok") else f"failed: {r.get('error')}"
 

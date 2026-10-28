@@ -20,7 +20,7 @@ class TeamsTicketRequest(BaseModel):
     summary: str
     description: str
     sr_type_id: str
-    subsidiary_id: Optional[str] = "43503"
+    subsidiary_id: Optional[str] = ""
     effort_hours: Optional[float] = 1.0
 
 

@@ -1,6 +1,7 @@
 -- Default settings. Values are edited later in Admin Settings (stored in cloudpulse_settings).
 -- Connection details and secrets are intentionally empty.
 INSERT INTO cloudpulse_settings (key, value, category, description, is_secret) VALUES
+  ('org.name', '', 'general', 'Organisation name — used in report footers, email signatures and LLM prompts', FALSE),
   ('ad.audit_lookback_days', '7', 'ad', 'Days of directory audit logs to analyse', FALSE),
   ('ad.dc_servers', '', 'ad', 'Comma-separated domain controller hostnames (empty = auto-detect *dc<N> from CloudPulse inventory)', FALSE),
   ('ad.enabled', 'false', 'ad', 'Collect AD / Entra ID health from Microsoft Graph (true/false)', FALSE),
