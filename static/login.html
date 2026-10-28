@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudPulse Platform — Sign in</title>
+<link rel="icon" type="image/svg+xml" href="/static/brand/cloudpulse-mark.svg">
+<script>
+(function () { try { var t = localStorage.getItem('cp_theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {} })();
+</script>
+<link rel="stylesheet" href="/static/ds.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    background: var(--bg);
+    background-image: radial-gradient(ellipse 70% 55% at 50% -5%, var(--accent-tint) 0%, transparent 70%);
+  }
+  .login-wrap { width: 100%; max-width: 400px; padding: 20px; animation: ds-page .4s var(--ease-out); }
+  .logo { text-align: center; margin-bottom: 28px; }
+  .logo img { width: 56px; height: 56px; display: inline-block; filter: drop-shadow(0 6px 14px rgba(10, 132, 255, .25)); }
+  .logo h1 { font-family: var(--font-display); font-size: 2rem; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; margin-top: 14px; color: var(--text); }
+  .logo p { color: var(--text2); font-size: .9rem; margin-top: 6px; letter-spacing: -.005em; }
+  .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 18px; padding: 28px; box-shadow: var(--shadow-3); }
+  .form-group { margin-bottom: 16px; }
+  label { display: block; font-size: .8rem; color: var(--text2); margin-bottom: 6px; font-weight: 500; }
+  input {
+    width: 100%; padding: 11px 14px; background: var(--field); border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font: inherit; font-size: .95rem; outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .btn {
+    width: 100%; padding: 11px; border: none; border-radius: 10px; cursor: pointer; font: inherit; font-size: .95rem; font-weight: 600;
+    transition: background-color .15s, transform .1s var(--ease-out); margin-top: 4px;
+  }
+  .btn:active:not(:disabled) { transform: scale(.97); }
+  .btn-primary { background: var(--accent); color: var(--on-accent); }
+  .btn-primary:hover { background: var(--accent3); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-entra {
+    width: 100%; padding: 11px; background: var(--fill); border: 0; border-radius: 10px; cursor: pointer; font: inherit;
+    font-size: .9rem; font-weight: 500; color: var(--text); display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: background-color .15s, transform .1s var(--ease-out);
+  }
+  .btn-entra:hover { background: var(--fill-2); }
+  .btn-entra:active { transform: scale(.97); }
+  .divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--text3); font-size: .78rem; }
+  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--hairline); }
+  .error-msg {
+    background: color-mix(in srgb, var(--crit) 10%, transparent); color: var(--crit); border-radius: 10px;
+    padding: 10px 14px; font-size: .85rem; margin-bottom: 16px; display: none;
+  }
+  .footer-note { text-align: center; color: var(--text3); font-size: .75rem; margin-top: 22px; }
+  .spinner {
+    display: inline-block; width: 15px; height: 15px; border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff;
+    border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .login-wrap { animation: none; } }
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="logo">
+    <img src="/static/brand/cloudpulse-mark.svg" alt="" width="56" height="56">
+    <h1>CloudPulse Platform</h1>
+    <p>Infrastructure, identity &amp; security operations</p>
+  </div>
+
+  <div class="card">
+    <div class="error-msg" id="errMsg"></div>
+
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" placeholder="admin" autocomplete="username" required>
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="••••••••" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="loginBtn">Sign In</button>
+    </form>
+
+    <div class="divider">or</div>
+
+    <button class="btn-entra" id="entraBtn" onclick="window.location='/api/auth/entra/login'">
+      <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#00BCF2" d="M0 0h8.5v8.5H0z"/><path fill="#00B294" d="M9.5 0H18v8.5H9.5z"/><path fill="#FFB900" d="M0 9.5h8.5V18H0z"/><path fill="#F25022" d="M9.5 9.5H18V18H9.5z"/></svg>
+      Continue with Microsoft Entra ID
+    </button>
+  </div>
+
+  <div class="footer-note">emaratech · Investment Corporation of Dubai</div>
+</div>
+
+<script>
+  // Check if redirected with token from Entra SSO callback
+  const params = new URLSearchParams(window.location.search);
+  const ssoToken = params.get('token');
+  const ssoError = params.get('error');
+
+  if (ssoToken) {
+    localStorage.setItem('cp_token', ssoToken);
+    window.location.replace('/');
+  }
+  if (ssoError) {
+    const errEl = document.getElementById('errMsg');
+    errEl.style.display = 'block';
+    errEl.textContent = 'Azure SSO error: ' + decodeURIComponent(ssoError).replace(/\+/g, ' ');
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('loginBtn');
+    const err = document.getElementById('errMsg');
+    err.style.display = 'none';
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Signing in…';
+
+    const form = new FormData(e.target);
+    try {
+      const res = await fetch('/api/auth/token', {
+        method: 'POST',
+        body: new URLSearchParams(form),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.setItem('cp_token', data.access_token);
+        localStorage.setItem('cp_user', JSON.stringify({
+          username: data.username, full_name: data.full_name, is_admin: data.is_admin
+        }));
+        window.location.replace('/');
+      } else {
+        err.textContent = data.detail || 'Invalid credentials';
+        err.style.display = 'block';
+      }
+    } catch (ex) {
+      err.textContent = 'Connection error. Is the server running?';
+      err.style.display = 'block';
+    }
+    btn.disabled = false;
+    btn.innerHTML = 'Sign In';
+  });
+</script>
+</body>
+</html>

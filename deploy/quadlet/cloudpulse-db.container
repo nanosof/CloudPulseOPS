@@ -1,0 +1,21 @@
+[Unit]
+Description=CloudPulse Platform database
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/cloudpulse-db:latest
+ContainerName=cloudpulse-db
+Network=cloudpulse.network
+EnvironmentFile=%h/.config/cloudpulse/db.env
+Volume=cloudpulse-db-data:/var/lib/postgresql/data:Z
+HealthCmd=pg_isready -U postgres
+HealthInterval=30s
+HealthStartPeriod=30s
+
+[Service]
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=default.target

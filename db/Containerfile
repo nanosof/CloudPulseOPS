@@ -1,0 +1,7 @@
+FROM docker.io/library/postgres:16
+
+LABEL org.opencontainers.image.title="CloudPulse Platform database" \
+      org.opencontainers.image.description="PostgreSQL 16 with the CloudPulse schema applied on first start"
+
+COPY init/00-init.sh /docker-entrypoint-initdb.d/00-init.sh
+COPY init/10-schema.sql init/20-settings.sql /docker-entrypoint-initdb.d/sql/

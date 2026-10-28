@@ -1,0 +1,24 @@
+# Variant for hosts where PostgreSQL already runs in another container and an nginx
+# container ("ingress-proxy") owns the network namespace. The app joins that namespace,
+# so nginx reaches it on 127.0.0.1:8694 and it reaches PostgreSQL on 127.0.0.1:5432.
+# Create the database and role first; see docs/operations.md.
+
+[Unit]
+Description=CloudPulse Platform
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Container]
+Image=localhost/cloudpulse:latest
+ContainerName=cloudpulse
+Network=container:ingress-proxy
+EnvironmentFile=%h/.config/cloudpulse/cloudpulse.env
+Label=app=cloudpulse
+
+[Service]
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=default.target

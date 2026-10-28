@@ -1,0 +1,21 @@
+[Unit]
+Description=CloudPulse Platform
+Requires=cloudpulse-db.service
+After=cloudpulse-db.service
+
+[Container]
+Image=localhost/cloudpulse:latest
+ContainerName=cloudpulse
+Network=cloudpulse.network
+# Bound to localhost; publish through the reverse proxy in deploy/nginx
+PublishPort=127.0.0.1:8694:8694
+EnvironmentFile=%h/.config/cloudpulse/cloudpulse.env
+Label=app=cloudpulse
+
+[Service]
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=default.target

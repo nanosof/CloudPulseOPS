@@ -1,0 +1,9 @@
+.git
+.gitignore
+docs
+deploy
+db
+*.md
+.env
+*.env
+__pycache__

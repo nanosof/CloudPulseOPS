@@ -1,0 +1,13 @@
+# Code-only rebuild on top of an existing CloudPulse image.
+# Use this on hosts without access to OS package mirrors; dependencies are taken from BASE.
+#
+#   podman build -f Containerfile.update --build-arg BASE=localhost/cloudpulse:<previous> -t localhost/cloudpulse:<new> .
+ARG BASE=localhost/cloudpulse:latest
+FROM ${BASE}
+USER root
+RUN rm -rf /app/app /app/static /app/scripts
+COPY app/     /app/app/
+COPY static/  /app/static/
+COPY scripts/ /app/scripts/
+RUN chown -R 1000:1000 /app
+USER 1000
