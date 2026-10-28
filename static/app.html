@@ -25,13 +25,13 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  /* OLED dark palette */
-  --bg:#0F172A;--bg2:#0B1120;--surface:#1B2336;--surface2:#1E293B;--surface3:#243049;
-  --border:#475569;--border2:#334155;
-  /* Neon accents */
-  --accent:#22C55E;--accent2:#16A34A;--accent3:#4ADE80;
-  --ok:#22C55E;--warn:#F59E0B;--crit:#EF4444;--info:#38BDF8;
-  --text:#E2E8F0;--text2:#94A3B8;--text3:#64748B;
+  /* Light palette base (overridden by ds.css) */
+  --bg:#f5f5f7;--bg2:#f5f5f7;--surface:#ffffff;--surface2:#ffffff;--surface3:#f2f2f7;
+  --border:rgba(0,0,0,.1);--border2:rgba(0,0,0,.08);
+  /* Orange accent (overridden by ds.css) */
+  --accent:#F97316;--accent2:#EA580C;--accent3:#FB923C;
+  --ok:#16a34a;--warn:#d97706;--crit:#dc2626;--info:#0071e3;
+  --text:#1d1d1f;--text2:#6e6e73;--text3:#8e8e93;
   /* Dense layout */
   --gap:8px;--pad:12px;--row-h:36px;--font-sm:12px;
   --sidebar-w:220px;--header-h:52px;
@@ -2369,7 +2369,7 @@ function renderTicketsPie(tickets) {
   const labels = Object.keys(counts);
   const data   = labels.map(l => counts[l]);
   const colors = labels.map(l => ({
-    'Open':'#f59e0b','In Progress':'#06b6d4','Resolved':'#22c55e','Closed':'#64748b'
+    'Open':'#F97316','In Progress':'#06b6d4','Resolved':'#16a34a','Closed':'#64748b'
   }[l] || '#8b5cf6'));
   const ctx = document.getElementById('tickets-pie-chart');
   if (!ctx) return;
@@ -2671,8 +2671,8 @@ function renderFleetGBCharts(labels, trend) {
     data: {
       labels,
       datasets: [
-        { label:'Used GB',  data:trend.map(r=>r.fleet_used_mem_gb||0),  backgroundColor:'rgba(245,158,11,.5)' },
-        { label:'Free GB',  data:trend.map(r=>(r.fleet_total_mem_gb||0)-(r.fleet_used_mem_gb||0)), backgroundColor:'rgba(34,197,94,.2)' },
+        { label:'Used GB',  data:trend.map(r=>r.fleet_used_mem_gb||0),  backgroundColor:'rgba(249,115,22,.55)' },
+        { label:'Free GB',  data:trend.map(r=>(r.fleet_total_mem_gb||0)-(r.fleet_used_mem_gb||0)), backgroundColor:'rgba(249,115,22,.18)' },
       ]
     },
     options: { responsive:true, scales:{x:{stacked:true,ticks:{color: CT.tick,font:{size:10}},grid:{color:CT.grid}},y:{stacked:true,ticks:{color: CT.tick,font:{size:10}},grid:{color:CT.grid}}}, plugins:{legend:{labels:{color: CT.tick,font:{size:10}}}} }
@@ -2684,7 +2684,7 @@ function renderFleetGBCharts(labels, trend) {
       labels,
       datasets: [
         { label:'Used GB',  data:trend.map(r=>r.fleet_used_disk_gb||0),  backgroundColor:'rgba(99,102,241,.5)' },
-        { label:'Free GB',  data:trend.map(r=>(r.fleet_total_disk_gb||0)-(r.fleet_used_disk_gb||0)), backgroundColor:'rgba(34,197,94,.2)' },
+        { label:'Free GB',  data:trend.map(r=>(r.fleet_total_disk_gb||0)-(r.fleet_used_disk_gb||0)), backgroundColor:'rgba(249,115,22,.18)' },
       ]
     },
     options: { responsive:true, scales:{x:{stacked:true,ticks:{color: CT.tick,font:{size:10}},grid:{color:CT.grid}},y:{stacked:true,ticks:{color: CT.tick,font:{size:10}},grid:{color:CT.grid}}}, plugins:{legend:{labels:{color: CT.tick,font:{size:10}}}} }
@@ -3559,7 +3559,7 @@ async function viewHistoryData(id) {
     win.document.write(`<!DOCTYPE html><html><head><title>Report Data #${id}</title>
       <style>@font-face{font-family:'Fira Code';font-style:normal;font-weight:400;src:url('/static/fonts/fira-code-400.woff2') format('woff2')}@font-face{font-family:'Fira Code';font-style:normal;font-weight:500;src:url('/static/fonts/fira-code-500.woff2') format('woff2')}</style>
       <style>body{background:#0F172A;color:#E2E8F0;font-family:'Fira Code',monospace;padding:20px;font-size:13px}
-      h2{color:#22C55E;margin-bottom:8px}
+      h2{color:#F97316;margin-bottom:8px}
       .meta{color:#64748B;font-size:11px;margin-bottom:16px}
       pre{background:#1B2336;border:1px solid #334155;border-radius:8px;padding:16px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.6}</style>
       </head><body>

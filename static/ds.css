@@ -21,9 +21,9 @@
   --surface: #ffffff;  --surface2: #ffffff;  --surface3: #f2f2f7;
   --border: rgba(0, 0, 0, .1);  --border2: rgba(0, 0, 0, .08);  --hairline: rgba(0, 0, 0, .08);
   --text: #1d1d1f;  --text2: #6e6e73;  --text3: #8e8e93;
-  --accent: #0071e3;  --accent2: #0062c4;  --accent3: #0077ed;  --on-accent: #ffffff;
-  --accent-tint: rgba(0, 113, 227, .1);
-  --ok: #248a3d;  --warn: #c93400;  --crit: #d70015;  --info: #0071e3;
+  --accent: #F97316;  --accent2: #EA580C;  --accent3: #FB923C;  --on-accent: #ffffff;
+  --accent-tint: rgba(249, 115, 22, .1);
+  --ok: #16a34a;  --warn: #d97706;  --crit: #dc2626;  --info: #0071e3;
   --fill: rgba(118, 118, 128, .12);  --fill-2: rgba(118, 118, 128, .2);  --hover: rgba(0, 0, 0, .04);
   --field: #ffffff;  --th-bg: #fafafc;  --seg-active: #ffffff;
   --code-bg: #f2f2f7;  --code-fg: #3a3a8c;
@@ -44,12 +44,12 @@
     --surface: #1c1c1e;  --surface2: #2c2c2e;  --surface3: #3a3a3c;
     --border: rgba(255, 255, 255, .1);  --border2: rgba(255, 255, 255, .08);  --hairline: rgba(255, 255, 255, .08);
     --text: #f5f5f7;  --text2: #a1a1a6;  --text3: #8e8e93;
-    --accent: #0a84ff;  --accent2: #0071e3;  --accent3: #409cff;  --on-accent: #ffffff;
-    --accent-tint: rgba(10, 132, 255, .16);
+    --accent: #FF9F0A;  --accent2: #F97316;  --accent3: #FBBF24;  --on-accent: #0d0d0d;
+    --accent-tint: rgba(255, 159, 10, .16);
     --ok: #30d158;  --warn: #ff9f0a;  --crit: #ff453a;  --info: #64d2ff;
     --fill: rgba(118, 118, 128, .24);  --fill-2: rgba(118, 118, 128, .32);  --hover: rgba(255, 255, 255, .04);
-    --field: rgba(118, 118, 128, .16);  --th-bg: #232325;  --seg-active: #636366;
-    --code-bg: #0b0b0d;  --code-fg: #a5b4fc;
+    --field: rgba(118, 118, 128, .16);  --th-bg: #1f1f21;  --seg-active: #3a3a3c;
+    --code-bg: #0b0b0d;  --code-fg: #fbbf24;
     --material: rgba(28, 28, 30, .72);  --material-thick: rgba(36, 36, 38, .95);  --material-side: #18181a;
     --scrim: rgba(0, 0, 0, .5);
     --shadow-1: none;
@@ -64,12 +64,12 @@
   --surface: #1c1c1e;  --surface2: #2c2c2e;  --surface3: #3a3a3c;
   --border: rgba(255, 255, 255, .1);  --border2: rgba(255, 255, 255, .08);  --hairline: rgba(255, 255, 255, .08);
   --text: #f5f5f7;  --text2: #a1a1a6;  --text3: #8e8e93;
-  --accent: #0a84ff;  --accent2: #0071e3;  --accent3: #409cff;  --on-accent: #ffffff;
-  --accent-tint: rgba(10, 132, 255, .16);
+  --accent: #FF9F0A;  --accent2: #F97316;  --accent3: #FBBF24;  --on-accent: #0d0d0d;
+  --accent-tint: rgba(255, 159, 10, .16);
   --ok: #30d158;  --warn: #ff9f0a;  --crit: #ff453a;  --info: #64d2ff;
   --fill: rgba(118, 118, 128, .24);  --fill-2: rgba(118, 118, 128, .32);  --hover: rgba(255, 255, 255, .04);
-  --field: rgba(118, 118, 128, .16);  --th-bg: #232325;  --seg-active: #636366;
-  --code-bg: #0b0b0d;  --code-fg: #a5b4fc;
+  --field: rgba(118, 118, 128, .16);  --th-bg: #1f1f21;  --seg-active: #3a3a3c;
+  --code-bg: #0b0b0d;  --code-fg: #fbbf24;
   --material: rgba(28, 28, 30, .72);  --material-thick: rgba(36, 36, 38, .95);  --material-side: #18181a;
   --scrim: rgba(0, 0, 0, .5);
   --shadow-1: none;
@@ -102,7 +102,7 @@ code, pre, .mono, .ad-tbl .mono { font-family: var(--mono); }
 /* ── sidebar ───────────────────────────────────────────────────────── */
 #sidebar { background: var(--material-side); border-right: 1px solid var(--hairline); }
 .sb-logo { border-bottom: 0; }
-.sb-logo-icon { box-shadow: none; background: linear-gradient(145deg, #34c759, #0a84ff); border-radius: 9px; }
+.sb-logo-icon { box-shadow: none; background: linear-gradient(135deg, #F97316, #FBBF24); border-radius: 9px; }
 .sb-logo-text { font-family: var(--font-display); letter-spacing: -.015em; color: var(--text); }
 .sb-logo-sub { color: var(--text3); letter-spacing: .01em; }
 .sb-section { font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text3); padding: 14px 10px 4px; }
@@ -265,7 +265,7 @@ tr:hover td { background: var(--hover); }
 .u-bar, .ad-meter .trk { background: var(--fill); }
 .tm-card { border-left-width: 3px; }
 .ai-msg.user .ai-bubble { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 18px 18px 4px 18px; }
-.ai-msg.bot .ai-av { background: linear-gradient(145deg, #34c759, #0a84ff); color: #fff; }
+.ai-msg.bot .ai-av { background: linear-gradient(135deg, #F97316, #FBBF24); color: #fff; }
 .ai-chat.active { background: var(--accent-tint); color: var(--accent); }
 .ai-chat:hover { background: var(--hover); }
 .ai-side { background: var(--material-side); border-right: 1px solid var(--hairline); }
