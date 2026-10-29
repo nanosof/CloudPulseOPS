@@ -1720,6 +1720,7 @@ let fleetChart  = null, fleetAvgChart = null, fleetMemChart = null, fleetDiskCha
 let serverReportChart = null;
 let allSettings = {};
 let _currentServer = '';
+let _currentServerDetail = null;
 
 // ═══════════════════════════════════════════════════════════
 // Bootstrap
@@ -2087,8 +2088,10 @@ async function _loadServerModalData() {
     ]);
     detail.processes = procs.processes || detail.processes || [];
     detail._live = live;
+    _currentServerDetail = detail;
     document.getElementById('server-modal-body').innerHTML = renderServerDetail(detail, {snapshots:[]});
   } catch(e) {
+    _currentServerDetail = null;
     document.getElementById('server-modal-body').innerHTML = `<div style="color:var(--crit)">Error: ${e.message}</div>`;
   }
 }
@@ -2251,11 +2254,54 @@ function renderServerDetail(d, hist) {
 }
 
 function createTicketFromServer() {
+  const d    = _currentServerDetail;
+  const live = d && d._live;
+
+  // ── build a metric-specific summary so the LLM draft has exact numbers ───
+  let lines = [`Server: ${_currentServer}`];
+
+  if (live) {
+    const cpu  = live.cpu    || {};
+    const mem  = live.memory || {};
+    const disk = live.disk   || {};
+    const cpuVal  = cpu.avg  ?? cpu.current  ?? null;
+    const memVal  = mem.avg  ?? mem.current  ?? null;
+    const diskVal = disk.avg ?? disk.current ?? null;
+
+    const metricLines = [];
+    if (cpuVal  !== null) metricLines.push(`CPU ${cpuVal.toFixed(1)}%`);
+    if (memVal  !== null) {
+      const detail = mem.total_gb
+        ? ` (${mem.used_gb ?? (mem.total_gb - (mem.free_gb||0))} GB used / ${mem.total_gb} GB total)`
+        : '';
+      metricLines.push(`Memory ${memVal.toFixed(1)}%${detail}`);
+    }
+    if (diskVal !== null) metricLines.push(`Disk (worst mount) ${diskVal.toFixed(1)}%`);
+    if (metricLines.length) lines.push('Live metrics: ' + metricLines.join(', '));
+  }
+
+  // per-volume disk breakdown
+  const disks = d && d.disks || [];
+  if (disks.length) {
+    const vols = disks.map(dk =>
+      `${dk.mount} ${dk.used_pct.toFixed(1)}% (${gbStr(dk.total_gb)} total, ${gbStr(dk.free_gb)} free)`
+    );
+    lines.push('Disk volumes: ' + vols.join(' | '));
+  }
+
+  // top CPU processes
+  const procs = d && d.processes || [];
+  if (procs.length) {
+    const topProcs = procs.slice(0, 5)
+      .map(p => `${p.name} CPU ${p.cpu_pct.toFixed(1)}%${p.mem_mb ? ` Mem ${p.mem_mb.toFixed(0)} MB` : ''}`)
+      .join(', ');
+    lines.push('Top processes: ' + topProcs);
+  }
+
   closeModal('server-modal');
   navigate('jira');
   jiraTab('create', document.querySelector('#page-jira .tab-bar .tab-btn:nth-child(2)'));
-  document.getElementById('issue-description').value =
-    `Server ${_currentServer} is experiencing performance issues. Please investigate CPU, memory, and disk utilization.`;
+  document.getElementById('issue-description').value = lines.join('\n');
 }
 
 // ═══════════════════════════════════════════════════════════

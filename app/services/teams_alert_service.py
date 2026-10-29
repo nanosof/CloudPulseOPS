@@ -534,7 +534,7 @@ async def get_server_metrics(server_name: str) -> dict[str, Any]:
     from app.routers.agent import _build_server_payload
     try:
         async with AsyncSessionLocal() as db:
-            return await _build_server_payload(server_name, ["cpu", "memory", "disk"], 60, db)
+            return await _build_server_payload(server_name, ["cpu", "memory", "disk", "process"], 60, db)
     except Exception as exc:
         log.exception("CloudPulse metrics lookup failed for %s", server_name)
         return {"error": str(exc)}
@@ -649,6 +649,49 @@ CloudPulse Live Data for {server}:
 _ALERT_SR_TYPE_IDS: tuple[str, ...] = tuple(llm.SR_TYPES.keys())
 
 
+def _format_metrics_block(metric_type: str, ig_data: dict) -> str:
+    """Return a readable metrics block to inject into the Jira draft prompt."""
+    rt = (ig_data or {}).get("realtime", {}) if isinstance(ig_data, dict) else {}
+    lines: list[str] = []
+
+    cpu = rt.get("cpu") or {}
+    if cpu:
+        lines.append(f"CPU: {cpu.get('avg_pct', 0):.1f}% (peak {cpu.get('max_pct', 0):.1f}%)")
+
+    mem = rt.get("memory") or {}
+    if mem:
+        total = mem.get("total_gb", 0) or 0
+        used  = mem.get("used_gb",  0) or 0
+        free  = mem.get("free_gb",  0) or 0
+        lines.append(
+            f"Memory: {mem.get('used_pct', 0):.1f}% used"
+            + (f" — {used:.1f} GB used / {total:.1f} GB total ({free:.1f} GB free)" if total else "")
+        )
+
+    disks = rt.get("disk") or []
+    if disks:
+        for d in disks:
+            mount = d.get("mount", "?")
+            total = d.get("total_gb", 0) or 0
+            used  = d.get("used_gb",  0) or 0
+            free  = d.get("free_gb",  0) or 0
+            lines.append(
+                f"Disk {mount}: {d.get('used_pct', 0):.1f}% used"
+                + (f" — {used:.1f} GB used / {total:.1f} GB total ({free:.1f} GB free)" if total else "")
+            )
+
+    procs = rt.get("process") or []
+    if procs and metric_type in ("cpu", "memory"):
+        lines.append("Top processes:")
+        for p in procs[:5]:
+            cpu_s = f"CPU {p.get('cpu_pct', 0):.1f}%" if p.get("cpu_pct") is not None else ""
+            mem_s = f"Mem {p.get('mem_mb', 0):.0f} MB" if p.get("mem_mb") is not None else ""
+            detail = ", ".join(filter(None, [cpu_s, mem_s]))
+            lines.append(f"  - {p.get('name', '?')}: {detail}")
+
+    return "\n".join(lines) if lines else "(no live metrics available)"
+
+
 async def generate_jira_draft(alert: dict) -> dict:
     """Ask the LLM for a Jira ticket draft pre-filled from the alert analysis."""
     server      = alert.get("server_name") or "UNKNOWN"
@@ -657,6 +700,23 @@ async def generate_jira_draft(alert: dict) -> dict:
     ig_data     = alert.get("ig_data") or {}
     sr_types    = {k: llm.SR_TYPES[k] for k in _ALERT_SR_TYPE_IDS if k in llm.SR_TYPES}
 
+    # Fetch processes for CPU / memory alerts if not already present
+    rt = (ig_data or {}).get("realtime", {}) if isinstance(ig_data, dict) else {}
+    if metric_type in ("cpu", "memory") and not rt.get("process"):
+        host = alert.get("server_name")
+        if host:
+            try:
+                async with AsyncSessionLocal() as _db:
+                    from app.routers.agent import _build_server_payload
+                    full = await _build_server_payload(host, ["process"], 60, _db)
+                    rt["process"] = full.get("realtime", {}).get("process", [])
+                    if isinstance(ig_data, dict):
+                        ig_data.setdefault("realtime", {})["process"] = rt["process"]
+            except Exception:
+                pass
+
+    metrics_block = _format_metrics_block(metric_type, ig_data)
+
     import app.config as _cfg
     org_name = await _cfg.get("org.name", "Your Organisation")
     default_sub_id   = next(iter(llm.SUBSIDIARIES), "")
@@ -664,6 +724,8 @@ async def generate_jira_draft(alert: dict) -> dict:
 
     system = f"""You are a senior IT Service Management engineer at {org_name}.
 Create a Jira Service Request from an infrastructure alert.
+
+IMPORTANT: The description MUST include the exact metric values provided — CPU %, memory %, disk % and GB figures, and the top process list if given. Do not generalise or omit them.
 
 SUBSIDIARIES (pick most relevant):
 {json.dumps(llm.SUBSIDIARIES)}
@@ -674,7 +736,7 @@ SR TYPES (pick most relevant):
 Respond ONLY with valid JSON:
 {{
   "summary": "<concise ticket title max 80 chars>",
-  "description": "<professional 3-4 paragraph description>",
+  "description": "<professional 3-4 paragraph description — include exact metric values>",
   "sr_type_id": "<id>",
   "sr_type_name": "<name>",
   "subsidiary_id": "{default_sub_id}",
@@ -685,11 +747,12 @@ Respond ONLY with valid JSON:
 Category: {metric_type}
 Alert: {alert.get('title') or ''}
 Hosts: {', '.join(alert.get('hosts') or [])}
-Analysis:
-{analysis}
 
-CloudPulse snapshot:
-{json.dumps(ig_data.get('realtime', {}) if isinstance(ig_data, dict) else {}, indent=2, default=str)}"""
+Live metrics (MUST appear in the description):
+{metrics_block}
+
+Analysis:
+{analysis}"""
     try:
         parsed = _extract_json(await llm.chat_completion(system, user))
         if parsed:
@@ -699,7 +762,7 @@ CloudPulse snapshot:
 
     return {
         "summary":         f"{metric_type.replace('_', ' ').upper()} alert on {server}"[:80],
-        "description":     analysis[:500] if analysis else "Infrastructure alert requiring investigation.",
+        "description":     f"Live metrics:\n{metrics_block}\n\n{analysis}"[:1000] if analysis else f"Live metrics:\n{metrics_block}",
         "sr_type_id":      next(iter(llm.SR_TYPES), ""),
         "sr_type_name":    next(iter(llm.SR_TYPES.values()), "On Call Production Alert & Response"),
         "subsidiary_id":   next(iter(llm.SUBSIDIARIES), ""),
