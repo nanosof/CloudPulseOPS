@@ -2257,64 +2257,69 @@ function renderServerDetail(d, hist) {
 
 function createTicketFromServer() {
   const d      = _currentServerDetail;
-  const live   = d && d._live;
-  const metric = _currentServerMetric; // cpu | memory | disk | null
+  const metric = _currentServerMetric; // 'cpu' | 'memory' | 'disk' | null
 
   const lines = [`Server: ${_currentServer}`];
 
-  // ── primary metric first (the one the user clicked from) ─────────────────
-  if (live) {
-    const cpu  = live.cpu    || {};
-    const mem  = live.memory || {};
-    const disk = live.disk   || {};
-    const cpuVal  = cpu.avg  ?? cpu.current  ?? null;
-    const memVal  = mem.avg  ?? mem.current  ?? null;
-    const diskVal = disk.avg ?? disk.current ?? null;
+  if (d) {
+    // ── DISK: show only disk volumes, no processes ──────────────────────────
+    if (metric === 'disk') {
+      const disks = d.disks || [];
+      if (disks.length) {
+        const worst = disks.reduce((a, b) => (b.used_pct > a.used_pct ? b : a), disks[0]);
+        lines.push(`Issue: High disk usage — ${worst.mount} at ${worst.used_pct.toFixed(1)}%`);
+        lines.push('Disk volumes:');
+        disks.forEach(dk => {
+          const usedGb = (dk.total_gb - (dk.free_gb || 0)).toFixed(1);
+          lines.push(`  ${dk.mount}: ${dk.used_pct.toFixed(1)}% used — ${usedGb} GB used / ${dk.total_gb} GB total (${(dk.free_gb||0).toFixed(1)} GB free)`);
+        });
+      }
 
-    // Lead with the metric that triggered the navigation
-    if (metric === 'disk' && diskVal !== null) {
-      lines.push(`Issue: High disk usage — ${diskVal.toFixed(1)}%`);
-    } else if (metric === 'memory' && memVal !== null) {
-      const memDetail = mem.total_gb
-        ? ` (${(mem.total_gb - (mem.free_gb||0)).toFixed(1)} GB used / ${mem.total_gb} GB total, ${(mem.free_gb||0).toFixed(1)} GB free)`
-        : '';
-      lines.push(`Issue: High memory usage — ${memVal.toFixed(1)}%${memDetail}`);
-    } else if (metric === 'cpu' && cpuVal !== null) {
-      lines.push(`Issue: High CPU usage — ${cpuVal.toFixed(1)}%`);
+    // ── MEMORY: show memory usage + processes sorted by memory ───────────────
+    } else if (metric === 'memory') {
+      const mem = d.memory || {};
+      const usedGb  = ((mem.total_gb || 0) - (mem.free_gb || 0)).toFixed(1);
+      lines.push(`Issue: High memory usage — ${(mem.avg || 0).toFixed(1)}%`);
+      if (mem.total_gb) {
+        lines.push(`Memory: ${usedGb} GB used / ${mem.total_gb} GB total (${(mem.free_gb||0).toFixed(1)} GB free)`);
+      }
+      const procs = [...(d.processes || [])].sort((a, b) => (b.mem_mb || 0) - (a.mem_mb || 0));
+      if (procs.length) {
+        lines.push('Top processes by memory:');
+        procs.slice(0, 5).forEach(p => {
+          lines.push(`  ${p.name}: Mem ${(p.mem_mb || 0).toFixed(0)} MB, CPU ${(p.cpu_pct || 0).toFixed(1)}%`);
+        });
+      }
+
+    // ── CPU: show CPU usage + processes sorted by CPU ────────────────────────
+    } else if (metric === 'cpu') {
+      const cpu = d.cpu || {};
+      lines.push(`Issue: High CPU usage — ${(cpu.avg || 0).toFixed(1)}% (peak ${(cpu.max || 0).toFixed(1)}%)`);
+      const procs = d.processes || [];
+      if (procs.length) {
+        lines.push('Top processes by CPU:');
+        procs.slice(0, 5).forEach(p => {
+          lines.push(`  ${p.name}: CPU ${(p.cpu_pct || 0).toFixed(1)}%, Mem ${(p.mem_mb || 0).toFixed(0)} MB`);
+        });
+      }
+
+    // ── fallback (modal opened without metric context) ───────────────────────
+    } else {
+      const cpu  = d.cpu    || {};
+      const mem  = d.memory || {};
+      const disks = d.disks || [];
+      if (cpu.avg)  lines.push(`CPU: ${(cpu.avg).toFixed(1)}% avg (peak ${(cpu.max||0).toFixed(1)}%)`);
+      if (mem.avg)  lines.push(`Memory: ${(mem.avg).toFixed(1)}% — ${((mem.total_gb||0)-(mem.free_gb||0)).toFixed(1)} GB / ${(mem.total_gb||0)} GB`);
+      const worst = disks.length ? disks.reduce((a,b)=>(b.used_pct>a.used_pct?b:a), disks[0]) : null;
+      if (worst)    lines.push(`Disk (worst): ${worst.mount} ${worst.used_pct.toFixed(1)}%`);
+      const procs = d.processes || [];
+      if (procs.length) {
+        lines.push('Top processes by CPU:');
+        procs.slice(0, 5).forEach(p => {
+          lines.push(`  ${p.name}: CPU ${(p.cpu_pct||0).toFixed(1)}%, Mem ${(p.mem_mb||0).toFixed(0)} MB`);
+        });
+      }
     }
-
-    // Full snapshot of all metrics
-    const metricLines = [];
-    if (cpuVal  !== null) metricLines.push(`CPU ${cpuVal.toFixed(1)}%`);
-    if (memVal  !== null) {
-      const memDetail = mem.total_gb
-        ? ` (${(mem.total_gb - (mem.free_gb||0)).toFixed(1)} GB used / ${mem.total_gb} GB total)`
-        : '';
-      metricLines.push(`Memory ${memVal.toFixed(1)}%${memDetail}`);
-    }
-    if (diskVal !== null) metricLines.push(`Disk (worst mount) ${diskVal.toFixed(1)}%`);
-    if (metricLines.length) lines.push('All metrics: ' + metricLines.join(', '));
-  }
-
-  // ── per-volume disk breakdown (always include for disk alerts) ────────────
-  const disks = (d && d.disks) || [];
-  if (disks.length) {
-    const vols = disks.map(dk =>
-      `${dk.mount} ${dk.used_pct.toFixed(1)}% used (${gbStr(dk.total_gb)} total, ${gbStr(dk.free_gb)} free)`
-    );
-    lines.push('Disk volumes:\n  ' + vols.join('\n  '));
-  }
-
-  // ── top processes (sort by memory for memory alerts, else CPU) ────────────
-  const procs = (d && d.processes) || [];
-  if (procs.length) {
-    const sorted = metric === 'memory'
-      ? [...procs].sort((a, b) => (b.mem_mb || 0) - (a.mem_mb || 0))
-      : procs;
-    const topProcs = sorted.slice(0, 5)
-      .map(p => `${p.name}: CPU ${(p.cpu_pct||0).toFixed(1)}%${p.mem_mb != null ? `, Mem ${p.mem_mb.toFixed(0)} MB` : ''}`)
-      .join('\n  ');
-    lines.push(`Top processes (by ${metric === 'memory' ? 'memory' : 'CPU'}):\n  ${topProcs}`);
   }
 
   closeModal('server-modal');
