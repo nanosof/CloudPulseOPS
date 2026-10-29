@@ -1721,6 +1721,7 @@ let serverReportChart = null;
 let allSettings = {};
 let _currentServer = '';
 let _currentServerDetail = null;
+let _currentServerMetric = null;  // metric context that opened the modal (cpu/memory/disk/null)
 
 // ═══════════════════════════════════════════════════════════
 // Bootstrap
@@ -1959,7 +1960,7 @@ function renderDashStats(dash) {
 function miniServerList(servers, metric) {
   if (!servers?.length) return '<div style="color:var(--text3);font-size:.78rem;padding:10px">No data</div>';
   return servers.slice(0,8).map(s => `
-    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="openServerModal('${s.server}')">
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="openServerModal('${s.server}','${metric}')">
       <div style="flex:1;min-width:0;font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.server}">${s.server}</div>
       <div style="min-width:100px">${bar(s.avg)}</div>
     </div>
@@ -2069,8 +2070,9 @@ function renderTop20Table(servers, metric) {
 let _modalProcSortBy = 'cpu';
 let _modalLiveWindow = 5;   // minutes: 1 | 5 | 10 | 15
 
-async function openServerModal(serverName) {
+async function openServerModal(serverName, fromMetric) {
   _currentServer = serverName;
+  _currentServerMetric = fromMetric || null;
   _modalProcSortBy = 'cpu';
   document.getElementById('server-modal-title').textContent = '🖥️ ' + serverName;
   document.getElementById('server-modal-body').innerHTML = '<div class="loading"><div class="spinner"></div>Loading live server data…</div>';
@@ -2254,12 +2256,13 @@ function renderServerDetail(d, hist) {
 }
 
 function createTicketFromServer() {
-  const d    = _currentServerDetail;
-  const live = d && d._live;
+  const d      = _currentServerDetail;
+  const live   = d && d._live;
+  const metric = _currentServerMetric; // cpu | memory | disk | null
 
-  // ── build a metric-specific summary so the LLM draft has exact numbers ───
-  let lines = [`Server: ${_currentServer}`];
+  const lines = [`Server: ${_currentServer}`];
 
+  // ── primary metric first (the one the user clicked from) ─────────────────
   if (live) {
     const cpu  = live.cpu    || {};
     const mem  = live.memory || {};
@@ -2268,34 +2271,50 @@ function createTicketFromServer() {
     const memVal  = mem.avg  ?? mem.current  ?? null;
     const diskVal = disk.avg ?? disk.current ?? null;
 
+    // Lead with the metric that triggered the navigation
+    if (metric === 'disk' && diskVal !== null) {
+      lines.push(`Issue: High disk usage — ${diskVal.toFixed(1)}%`);
+    } else if (metric === 'memory' && memVal !== null) {
+      const memDetail = mem.total_gb
+        ? ` (${(mem.total_gb - (mem.free_gb||0)).toFixed(1)} GB used / ${mem.total_gb} GB total, ${(mem.free_gb||0).toFixed(1)} GB free)`
+        : '';
+      lines.push(`Issue: High memory usage — ${memVal.toFixed(1)}%${memDetail}`);
+    } else if (metric === 'cpu' && cpuVal !== null) {
+      lines.push(`Issue: High CPU usage — ${cpuVal.toFixed(1)}%`);
+    }
+
+    // Full snapshot of all metrics
     const metricLines = [];
     if (cpuVal  !== null) metricLines.push(`CPU ${cpuVal.toFixed(1)}%`);
     if (memVal  !== null) {
-      const detail = mem.total_gb
-        ? ` (${mem.used_gb ?? (mem.total_gb - (mem.free_gb||0))} GB used / ${mem.total_gb} GB total)`
+      const memDetail = mem.total_gb
+        ? ` (${(mem.total_gb - (mem.free_gb||0)).toFixed(1)} GB used / ${mem.total_gb} GB total)`
         : '';
-      metricLines.push(`Memory ${memVal.toFixed(1)}%${detail}`);
+      metricLines.push(`Memory ${memVal.toFixed(1)}%${memDetail}`);
     }
     if (diskVal !== null) metricLines.push(`Disk (worst mount) ${diskVal.toFixed(1)}%`);
-    if (metricLines.length) lines.push('Live metrics: ' + metricLines.join(', '));
+    if (metricLines.length) lines.push('All metrics: ' + metricLines.join(', '));
   }
 
-  // per-volume disk breakdown
-  const disks = d && d.disks || [];
+  // ── per-volume disk breakdown (always include for disk alerts) ────────────
+  const disks = (d && d.disks) || [];
   if (disks.length) {
     const vols = disks.map(dk =>
-      `${dk.mount} ${dk.used_pct.toFixed(1)}% (${gbStr(dk.total_gb)} total, ${gbStr(dk.free_gb)} free)`
+      `${dk.mount} ${dk.used_pct.toFixed(1)}% used (${gbStr(dk.total_gb)} total, ${gbStr(dk.free_gb)} free)`
     );
-    lines.push('Disk volumes: ' + vols.join(' | '));
+    lines.push('Disk volumes:\n  ' + vols.join('\n  '));
   }
 
-  // top CPU processes
-  const procs = d && d.processes || [];
+  // ── top processes (sort by memory for memory alerts, else CPU) ────────────
+  const procs = (d && d.processes) || [];
   if (procs.length) {
-    const topProcs = procs.slice(0, 5)
-      .map(p => `${p.name} CPU ${p.cpu_pct.toFixed(1)}%${p.mem_mb ? ` Mem ${p.mem_mb.toFixed(0)} MB` : ''}`)
-      .join(', ');
-    lines.push('Top processes: ' + topProcs);
+    const sorted = metric === 'memory'
+      ? [...procs].sort((a, b) => (b.mem_mb || 0) - (a.mem_mb || 0))
+      : procs;
+    const topProcs = sorted.slice(0, 5)
+      .map(p => `${p.name}: CPU ${(p.cpu_pct||0).toFixed(1)}%${p.mem_mb != null ? `, Mem ${p.mem_mb.toFixed(0)} MB` : ''}`)
+      .join('\n  ');
+    lines.push(`Top processes (by ${metric === 'memory' ? 'memory' : 'CPU'}):\n  ${topProcs}`);
   }
 
   closeModal('server-modal');
