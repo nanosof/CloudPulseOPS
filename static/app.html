@@ -1236,6 +1236,12 @@ code,pre,.mono{font-family:var(--mono);font-size:.82rem}
       <!-- Elasticsearch settings -->
       <div class="tab-panel" id="admin-elastic">
         <div id="settings-es"></div>
+        <div style="background:color-mix(in srgb,var(--info) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--info) 25%,transparent);border-radius:10px;padding:12px 16px;margin:12px 0;font-size:.82rem;color:var(--text2)">
+          <strong style="color:var(--text)">Security Event Credentials (optional)</strong><br>
+          If your security event indices (.ds-logs-system.security-*) require different credentials from the metrics cluster,
+          set <code>sec_url</code>, <code>sec_username</code> and <code>sec_password</code> above.
+          Leave blank to use the main Elasticsearch credentials.
+        </div>
         <div style="display:flex;gap:10px;margin-top:8px">
           <button class="btn btn-primary btn-sm" onclick="saveSettings('es')">Save</button>
           <button class="btn btn-secondary btn-sm" onclick="testConnection('elasticsearch')">Test Connection</button>
@@ -2989,7 +2995,8 @@ async function loadAllSettings() {
     allSettings = {};
     settings.forEach(s => { allSettings[s.key] = s; });
     renderSettingsSection('elasticsearch', 'settings-es',
-      ['es.url','es.username','es.password','es.index_pattern','es.ssl_verify']);
+      ['es.url','es.username','es.password','es.index_pattern','es.ssl_verify',
+       'es.sec_url','es.sec_username','es.sec_password']);
     renderSettingsSection('llm', 'settings-llm',
       ['llm.base_url','llm.model','llm.api_key','llm.max_tokens','llm.temperature','llm.ssl_verify']);
     renderSettingsSection('jira', 'settings-jira',

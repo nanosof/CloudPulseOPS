@@ -60,21 +60,27 @@ def _es_headers(username: str, password: str) -> dict:
     return {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
 
 
-async def _get_conn() -> tuple[str, dict, bool]:
+async def _get_conn(security: bool = False) -> tuple[str, dict, bool]:
     url      = await cfg.get("es.url", "")
     username = await cfg.get("es.username", "")
     password = await cfg.get("es.password", "")
     ssl_v    = await cfg.get_bool("es.ssl_verify", False)
+    if security:
+        sec_url  = await cfg.get("es.sec_url", "")
+        sec_user = await cfg.get("es.sec_username", "")
+        sec_pass = await cfg.get("es.sec_password", "")
+        if sec_url:
+            url      = sec_url
+        if sec_user:
+            username = sec_user
+        if sec_pass:
+            password = sec_pass
     return url.rstrip("/"), _es_headers(username, password), ssl_v
 
 
-async def _post(path: str, body: dict) -> dict:
-    """
-    POST to ES. Always passes:
-      ignore_unavailable=true        — skip shards/indices that are offline
-      allow_partial_search_results=true — return what we have if some shards fail
-    """
-    url, headers, ssl_verify = await _get_conn()
+async def _post(path: str, body: dict, security: bool = False) -> dict:
+    """POST to ES. security=True uses the separate security-index credentials when configured."""
+    url, headers, ssl_verify = await _get_conn(security=security)
     params = "ignore_unavailable=true&allow_partial_search_results=true"
     sep = "&" if "?" in path else "?"
     full = f"{url}{path}{sep}{params}"
@@ -890,8 +896,8 @@ async def get_lockout_events(hours: float = 24, username: str = "") -> Dict:
 
     try:
         er, ar = await asyncio.gather(
-            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", events_body),
-            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", aggs_body),
+            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", events_body, security=True),
+            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", aggs_body, security=True),
         )
     except Exception as e:
         return {"error": str(e), "events": [], "by_account": [], "by_source_machine": [],
@@ -1022,7 +1028,7 @@ async def get_user_lockout_triage(username: str, hours: float = 24) -> Dict:
 
     try:
         es_r, azure_signins = await asyncio.gather(
-            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", es_body),
+            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", es_body, security=True),
             _azure_signins(),
         )
     except Exception as e:
