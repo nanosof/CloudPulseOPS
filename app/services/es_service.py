@@ -482,15 +482,56 @@ async def get_fleet_summary(minutes: int = 60) -> Dict:
             else:                   ok       += 1
         return critical, warning, ok
 
+    # ── Reporting counts per freshness window ────────────────────────
+    # Each returns how many unique Windows Server hosts sent CPU data
+    # within that window — shows agent health across the fleet.
+    async def _count_reporting(window_minutes: int) -> int:
+        body = {
+            "size": 0,
+            "query": {"bool": {"filter": [
+                {"range": {"@timestamp": {"gte": f"now-{window_minutes}m"}}},
+                _SERVER_FILTER,
+            ]}},
+            "aggs": {
+                "unique_hosts": {"cardinality": {"field": "host.name"}}
+            }
+        }
+        r = await _post(f"/{_IDX_CPU}/_search", body)
+        return int(r.get("aggregations", {}).get("unique_hosts", {}).get("value", 0))
+
     try:
-        critical, warning, ok = await _severity_bands(minutes)
+        # Run severity bands + all four freshness counts in parallel
+        results = await asyncio.gather(
+            _severity_bands(minutes),
+            _count_reporting(1),
+            _count_reporting(5),
+            _count_reporting(10),
+            _count_reporting(15),
+            return_exceptions=True,
+        )
+        bands_result, r1, r5, r10, r15 = results
+
+        def _safe_int(v):
+            return int(v) if isinstance(v, int) else 0
+
+        reporting = {
+            "1m":  _safe_int(r1),
+            "5m":  _safe_int(r5),
+            "10m": _safe_int(r10),
+            "15m": _safe_int(r15),
+        }
+
+        if isinstance(bands_result, Exception):
+            raise bands_result
+        critical, warning, ok = bands_result
+
         # If no servers are actively reporting in the requested window, widen to 24h
         if (critical + warning + ok) == 0 and minutes < 1440:
             critical, warning, ok = await _severity_bands(1440)
             return {"total": db_total, "critical": critical, "warning": warning, "ok": ok,
-                    "window_minutes": minutes, "window_fallback": True}
+                    "window_minutes": minutes, "window_fallback": True, "reporting": reporting}
         return {"total": db_total, "critical": critical, "warning": warning, "ok": ok,
-                "window_minutes": minutes}
+                "window_minutes": minutes, "reporting": reporting}
     except Exception as e:
         return {"total": db_total, "critical": 0, "warning": 0, "ok": 0, "error": str(e)}
 
