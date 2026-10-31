@@ -152,7 +152,8 @@ body::before {
 }
 
 /* ensure content sits above the orbs layer */
-#sidebar, #main, .modal-overlay, #sp-drawer { position: relative; z-index: 1; }
+#sidebar, #main, #sp-drawer { position: relative; z-index: 1; }
+.modal-overlay { position: fixed !important; z-index: 100 !important; }
 
 code, pre, .mono, .ad-tbl .mono { font-family: var(--mono); }
 .stat-card .stat-val, .ad-kpi .v, .ad-tile .v, .u-big, .u-h .v, .tm-tile .v, .ad-countdown, .ad-ring text, .nf, .num, .bar-pct {
@@ -403,14 +404,25 @@ code, pre, .mono, .ad-tbl .mono { font-family: var(--mono); }
   box-shadow: 0 0 0 3px rgba(0, 120, 212, .18), var(--glass-sheen);
   outline: none;
 }
-.form-select { color-scheme: dark; }
-.form-select option { background: #0f2040; color: #e8f0fe; }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .form-select { color-scheme: light; }
-  :root:not([data-theme="dark"]) .form-select option { background: #ffffff; color: #0d1a2e; }
+.form-select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2390aecb' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px !important;
 }
-:root[data-theme="light"] .form-select { color-scheme: light; }
+.form-select option { background: #0d1e38; color: #e0ecff; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .form-select option { background: #ffffff; color: #0d1a2e; }
+  :root:not([data-theme="dark"]) .form-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23445577' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  }
+}
 :root[data-theme="light"] .form-select option { background: #ffffff; color: #0d1a2e; }
+:root[data-theme="light"] .form-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23445577' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+}
 .form-label { text-transform: none; letter-spacing: 0; font-size: .78rem; color: var(--text2); }
 
 /* ── tables ────────────────────────────────────────────────────────── */
