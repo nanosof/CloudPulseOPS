@@ -875,54 +875,49 @@ code,pre,.mono{font-family:var(--mono);font-size:.82rem}
     <div class="page" id="page-lockouts">
       <div class="page-header">
         <h2>Account Lockouts</h2>
-        <span class="page-sub">Windows Security Event Log — live from Elasticsearch</span>
+        <span class="page-sub">Elastic (4740/4625/4771) + Azure AD sign-ins — hybrid triage</span>
         <button class="btn btn-primary btn-sm" onclick="lockoutLoad()">↻ Refresh</button>
       </div>
 
       <!-- KPI row -->
-      <div class="cards-grid" id="lockout-kpis">
-        <div class="stat-card crit">
-          <div class="stat-label">Lockout Events</div>
-          <div class="stat-val" id="lo-total">—</div>
-          <div class="stat-sub" id="lo-window"></div>
-        </div>
-        <div class="stat-card warn">
-          <div class="stat-label">Unique Accounts Locked</div>
-          <div class="stat-val" id="lo-accounts">—</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Failed Logons (4625)</div>
-          <div class="stat-val" id="lo-failures">—</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Top Source Machine</div>
-          <div class="stat-val" style="font-size:1rem" id="lo-top-src">—</div>
-        </div>
+      <div class="cards-grid">
+        <div class="stat-card crit"><div class="stat-label">Lockout Events (4740)</div><div class="stat-val" id="lo-total">—</div><div class="stat-sub" id="lo-window"></div></div>
+        <div class="stat-card warn"><div class="stat-label">Unique Accounts</div><div class="stat-val" id="lo-accounts">—</div></div>
+        <div class="stat-card"><div class="stat-label">Failed Logons (4625)</div><div class="stat-val" id="lo-failures">—</div></div>
+        <div class="stat-card"><div class="stat-label">Kerberos Failures (4771)</div><div class="stat-val" id="lo-kerb">—</div></div>
       </div>
 
-      <!-- Filters -->
-      <div class="tm-toolbar" style="margin:14px 0 10px">
+      <!-- Search + window -->
+      <div class="tm-toolbar" style="margin:14px 0 10px;gap:10px">
+        <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px 10px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text2)" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="lo-search" placeholder="Search by username or UPN (Enter to triage)…"
+                 style="flex:1;background:none;border:none;outline:none;color:var(--text);font:inherit;font-size:.9rem"
+                 onkeydown="if(event.key==='Enter')lockoutTriage()" oninput="lockoutFilterRender()">
+          <button class="btn btn-primary btn-sm" onclick="lockoutTriage()" style="padding:4px 12px">Triage ▶</button>
+        </div>
         <div class="tab-bar" id="lo-window-tabs">
           <div class="tab-btn" onclick="lockoutWin(1,this)">1h</div>
           <div class="tab-btn active" onclick="lockoutWin(24,this)">24h</div>
           <div class="tab-btn" onclick="lockoutWin(72,this)">3d</div>
           <div class="tab-btn" onclick="lockoutWin(168,this)">7d</div>
-          <div class="tab-btn" onclick="lockoutWin(336,this)">14d</div>
         </div>
-        <input class="tb-input" id="lo-user-filter" placeholder="Filter by username…"
-               style="width:220px" oninput="lockoutFilterRender()">
-        <select class="form-select" id="lo-view" style="width:160px" onchange="lockoutRenderView()">
-          <option value="events">Lockout Events</option>
-          <option value="by-account">By Account</option>
-          <option value="by-source">By Source Machine</option>
-          <option value="by-dc">By Domain Controller</option>
-          <option value="failures">Failed Logons</option>
-          <option value="timeline">Timeline</option>
-        </select>
       </div>
 
-      <div id="lo-body" style="margin-top:6px"></div>
-      <div id="lo-detail" style="margin-top:16px"></div>
+      <!-- Two-panel layout: account list | triage detail -->
+      <div style="display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start">
+        <div>
+          <div style="font-size:.75rem;font-weight:700;color:var(--text2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px">Recent Lockouts</div>
+          <div id="lo-account-list" style="display:flex;flex-direction:column;gap:4px">
+            <div class="loading"><div class="spinner"></div>Loading…</div>
+          </div>
+        </div>
+        <div id="lo-triage-panel">
+          <div style="color:var(--text3);font-size:.88rem;padding:32px 0 0 8px">
+            Select an account from the list or type a username and click Triage ▶
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ══════════════════ AI ASSISTANT ══════════════════ -->
@@ -5962,35 +5957,33 @@ function aiChart(host, b, d) {
 // ═══════════════════════════════════════════════════════════
 // ACCOUNT LOCKOUTS
 // ═══════════════════════════════════════════════════════════
-let _loData = null;
-let _loHours = 24;
+let _loData = null, _loHours = 24, _loTriageUser = null;
 
 async function lockoutLoad() {
-  const body = document.getElementById('lo-body');
-  body.innerHTML = '<div class="loading"><div class="spinner"></div> Querying Elasticsearch…</div>';
   document.getElementById('lo-total').textContent = '—';
   document.getElementById('lo-accounts').textContent = '—';
   document.getElementById('lo-failures').textContent = '—';
-  document.getElementById('lo-top-src').textContent = '—';
-  document.getElementById('lo-detail').innerHTML = '';
+  document.getElementById('lo-kerb').textContent = '—';
+  document.getElementById('lo-window').textContent = '';
+  document.getElementById('lo-account-list').innerHTML = '<div class="loading"><div class="spinner"></div>Querying Elasticsearch…</div>';
   try {
-    const usr = document.getElementById('lo-user-filter').value.trim();
-    const qs = `hours=${_loHours}` + (usr ? `&username=${encodeURIComponent(usr)}` : '');
-    const r = await apiFetch(`/api/security/lockouts?${qs}`);
-    if (r.error) { body.innerHTML = `<div class="narrative-box">${adE(r.error)}</div>`; return; }
+    const r = await apiFetch(`/api/security/lockouts?hours=${_loHours}`);
+    if (r.error) {
+      document.getElementById('lo-account-list').innerHTML = `<div class="narrative-box" style="font-size:.82rem">${adE(r.error)}</div>`;
+      return;
+    }
     _loData = r;
     document.getElementById('lo-total').textContent = r.total_lockout_events ?? '—';
     document.getElementById('lo-accounts').textContent = r.unique_accounts_locked ?? '—';
     document.getElementById('lo-failures').textContent = (r.failed_logons_total ?? '—').toLocaleString();
+    document.getElementById('lo-kerb').textContent = r.kerberos_failures ?? '—';
     document.getElementById('lo-window').textContent = `last ${_loHours}h`;
-    const topSrc = (r.by_source_machine || [])[0];
-    document.getElementById('lo-top-src').textContent = topSrc ? `${topSrc.machine} (${topSrc.lockouts})` : '—';
     const badge = document.getElementById('nav-lockout-badge');
     if (r.total_lockout_events > 0) { badge.textContent = r.total_lockout_events; badge.style.display = ''; }
     else badge.style.display = 'none';
-    lockoutRenderView();
+    lockoutRenderList();
   } catch(e) {
-    body.innerHTML = `<div class="narrative-box">Error: ${adE(String(e))}</div>`;
+    document.getElementById('lo-account-list').innerHTML = `<div class="narrative-box" style="font-size:.82rem">Error: ${adE(String(e))}</div>`;
   }
 }
 
@@ -6002,78 +5995,189 @@ function lockoutWin(h, el) {
 }
 
 function lockoutFilterRender() {
-  if (_loData) lockoutLoad();
+  if (_loData) lockoutRenderList();
 }
 
-function lockoutRenderView() {
-  if (!_loData) return;
-  const view = document.getElementById('lo-view').value;
-  const body = document.getElementById('lo-body');
-  const r = _loData;
+function lockoutRenderList() {
+  const filter = (document.getElementById('lo-search').value || '').toLowerCase();
+  const accounts = (_loData?.by_account || []).filter(a =>
+    !filter || a.account.toLowerCase().includes(filter));
+  const list = document.getElementById('lo-account-list');
+  if (!accounts.length) {
+    list.innerHTML = '<div style="color:var(--text3);font-size:.82rem;padding:8px">No lockout accounts in this window.</div>';
+    return;
+  }
+  const maxLo = Math.max(...accounts.map(a => a.lockouts), 1);
+  list.innerHTML = accounts.map(a => {
+    const pct = Math.round(a.lockouts / maxLo * 100);
+    const active = _loTriageUser === a.account ? ' style="background:rgba(239,68,68,.12);border-color:var(--crit)"' : '';
+    return `<div class="lo-acct-row" onclick="lockoutTriageUser('${adE(a.account)}')"${active}>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-weight:600;font-size:.88rem">${adE(a.account)}</span>
+        <span class="badge-crit" style="font-size:.7rem">${a.lockouts}×</span>
+      </div>
+      <div style="background:rgba(239,68,68,.12);border-radius:4px;height:5px">
+        <div style="width:${pct}%;background:var(--crit);height:5px;border-radius:4px"></div>
+      </div>
+      <div style="color:var(--text3);font-size:.72rem;margin-top:3px">${a.last_seen ? a.last_seen.replace('T',' ').substring(0,19)+' UTC' : ''}</div>
+    </div>`;
+  }).join('');
+}
 
-  if (view === 'events') {
-    const rows = r.events || [];
-    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No lockout events (Event 4740) found in the selected window.</div>'; return; }
-    body.innerHTML = `
-      <div style="margin-bottom:8px;color:var(--text2);font-size:.82rem">Showing ${rows.length} of ${r.total_lockout_events} lockout events (most recent first)</div>
-      <div class="sp-table-wrap">${loTable(['timestamp','locked_account','domain','caller_machine','domain_controller'], rows)}</div>`;
-  } else if (view === 'by-account') {
-    const rows = r.by_account || [];
-    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No lockout data.</div>'; return; }
-    body.innerHTML = `<div class="sp-table-wrap">${loTable(['account','lockouts'], rows, 'lockouts')}</div>`;
-  } else if (view === 'by-source') {
-    const rows = r.by_source_machine || [];
-    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No source machine data.</div>'; return; }
-    body.innerHTML = `
-      <p style="color:var(--text2);font-size:.82rem;margin-bottom:8px">Source machine = the workstation or server whose credentials were tried, triggering the lockout.</p>
-      <div class="sp-table-wrap">${loTable(['machine','lockouts'], rows, 'lockouts')}</div>`;
-  } else if (view === 'by-dc') {
-    const rows = r.by_dc || [];
-    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No domain controller data.</div>'; return; }
-    body.innerHTML = `<div class="sp-table-wrap">${loTable(['dc','lockouts'], rows, 'lockouts')}</div>`;
-  } else if (view === 'failures') {
-    const rows = r.failed_logons_by_account || [];
-    const srcRows = r.failed_logons_by_source || [];
-    if (!rows.length && !srcRows.length) { body.innerHTML = '<div class="narrative-box">No failed logon data (Event 4625).</div>'; return; }
-    body.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-        <div>
-          <div class="card-title" style="margin-bottom:8px">Failed Logons by Account</div>
-          <div class="sp-table-wrap">${loTable(['account','failures'], rows, 'failures')}</div>
-        </div>
-        <div>
-          <div class="card-title" style="margin-bottom:8px">Failed Logons by Source Machine</div>
-          <div class="sp-table-wrap">${loTable(['machine','failures'], srcRows, 'failures')}</div>
-        </div>
-      </div>`;
-  } else if (view === 'timeline') {
-    const tl = r.failed_logon_timeline || [];
-    if (!tl.length) { body.innerHTML = '<div class="narrative-box">No timeline data available.</div>'; return; }
-    const canvasId = 'lo-timeline-chart';
-    body.innerHTML = `<div class="card" style="padding:16px"><div class="card-title">Failed Logons Timeline (last ${_loHours}h)</div><div style="height:260px"><canvas id="${canvasId}"></canvas></div></div>`;
-    const labels = tl.map(t => t.time);
-    const data = tl.map(t => t.failures);
-    adChart(canvasId, { type: 'line', labels, datasets: [{ label: 'Failed Logons', data, color: '#ef4444' }] });
+async function lockoutTriage() {
+  const u = document.getElementById('lo-search').value.trim();
+  if (!u) return;
+  await lockoutTriageUser(u);
+}
+
+async function lockoutTriageUser(username) {
+  _loTriageUser = username;
+  document.getElementById('lo-search').value = username;
+  lockoutRenderList();
+  const panel = document.getElementById('lo-triage-panel');
+  panel.innerHTML = `<div class="loading"><div class="spinner"></div> Querying ES + Azure for <b>${adE(username)}</b>…</div>`;
+  try {
+    const r = await apiFetch(`/api/security/lockouts/triage?username=${encodeURIComponent(username)}&hours=${_loHours}`);
+    if (r.error) { panel.innerHTML = `<div class="narrative-box">${adE(r.error)}</div>`; return; }
+    panel.innerHTML = loTriageHTML(r);
+    // render timeline chart if present
+    const tl = r.azure?.sign_ins || [];
+    if (document.getElementById('lo-az-chart') && tl.length) {
+      const grouped = {};
+      tl.forEach(s => {
+        const hr = (s.time || '').substring(0,13);
+        if (!grouped[hr]) grouped[hr] = {ok:0,fail:0};
+        if (s.status?.startsWith('✅')) grouped[hr].ok++; else grouped[hr].fail++;
+      });
+      const labels = Object.keys(grouped).sort();
+      adChart('lo-az-chart', { type:'bar', labels,
+        datasets: [
+          { label:'Success', data: labels.map(l=>grouped[l].ok), color:'#22c55e' },
+          { label:'Failed',  data: labels.map(l=>grouped[l].fail), color:'#ef4444' },
+        ]
+      });
+    }
+  } catch(e) {
+    panel.innerHTML = `<div class="narrative-box">Error: ${adE(String(e))}</div>`;
   }
 }
 
-function loTable(cols, rows, barCol) {
-  const maxBar = barCol ? Math.max(...rows.map(r => r[barCol] || 0), 1) : 0;
-  const hdr = cols.map(c => `<th>${adE(c.replace(/_/g,' '))}</th>`).join('');
+function loTriageHTML(r) {
+  const sev = r.severity || 'low';
+  const sevColor = {critical:'var(--crit)',high:'#f97316',medium:'var(--warn)',low:'var(--ok)'}[sev] || 'var(--text2)';
+  const sevEmoji = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'}[sev] || '⚪';
+
+  const machineBlock = r.caller_machine
+    ? `<div style="background:rgba(239,68,68,.10);border:1.5px solid var(--crit);border-radius:12px;padding:14px 18px;margin-bottom:16px">
+        <div style="font-size:.7rem;font-weight:700;color:var(--crit);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">⚠ Source Machine (Lockout Origin)</div>
+        <div style="font-size:1.5rem;font-weight:800;color:var(--crit);letter-spacing:-.02em">${adE(r.caller_machine)}</div>
+        <div style="font-size:.75rem;color:var(--text2);margin-top:4px">Identified via: ${adE(r.caller_machine_source||'')}</div>
+        ${r.ad_ips?.length ? `<div style="margin-top:6px;font-size:.78rem">IP: <code style="background:rgba(0,0,0,.15);padding:2px 6px;border-radius:4px">${r.ad_ips.join(', ')}</code></div>` : ''}
+      </div>`
+    : `<div style="background:rgba(245,158,11,.10);border:1.5px solid var(--warn);border-radius:12px;padding:14px 18px;margin-bottom:16px">
+        <div style="font-size:.7rem;font-weight:700;color:var(--warn);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">⚠ Source Machine</div>
+        <div style="font-size:1.1rem;font-weight:700;color:var(--warn)">${r.is_kerberos ? 'Unknown — Kerberos lockout' : 'Not found in any field'}</div>
+        ${r.is_kerberos ? '<div style="font-size:.78rem;color:var(--text2);margin-top:4px">CallerComputerName is empty on Kerberos lockouts. Check PDC Emulator netlogon.log</div>' : ''}
+      </div>`;
+
+  // KPI row
+  const kpiRow = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+    ${[
+      ['Lockouts (4740)', r.lockout_count, 'crit'],
+      ['Failed Logons (4625)', r.failed_logon_count, 'warn'],
+      ['Kerberos (4771)', r.kerberos_failure_count, ''],
+      ['Azure Failures', r.azure?.failures, ''],
+    ].map(([l,v,cls]) => `<div class="stat-card ${cls}" style="padding:10px 12px">
+      <div class="stat-label" style="font-size:.7rem">${l}</div>
+      <div class="stat-val" style="font-size:1.5rem">${v ?? '—'}</div>
+    </div>`).join('')}
+  </div>`;
+
+  // Logon type summary
+  const ltRows = (r.logon_type_summary || []).map(lt =>
+    `<tr><td><strong>Type ${lt.type}</strong></td><td>${adE(lt.description)}</td><td>${lt.count}×</td></tr>`
+  ).join('');
+  const ltBlock = ltRows ? `<div style="margin-bottom:14px">
+    <div class="card-title" style="margin-bottom:6px">Logon Types</div>
+    <table class="sp-tbl"><thead><tr><th>Type</th><th>Description</th><th>Count</th></tr></thead><tbody>${ltRows}</tbody></table>
+  </div>` : '';
+
+  // Burst timeline
+  const burstBlock = (r.lockout_bursts || []).length
+    ? `<div style="margin-bottom:14px">
+        <div class="card-title" style="margin-bottom:6px">Lockout Bursts (${r.lockout_bursts.length})</div>
+        ${r.lockout_bursts.map((b,i) =>
+          `<div style="font-size:.82rem;padding:5px 0;border-bottom:1px solid var(--hairline)">
+            <strong>Burst ${i+1}</strong>: ${b.start?.replace('T',' ').substring(0,19)} → ${b.end?.replace('T',' ').substring(0,19)} UTC
+            <span class="badge-crit" style="margin-left:6px">${b.count} events</span>
+          </div>`
+        ).join('')}
+      </div>` : '';
+
+  // Domain controllers + IPs
+  const infraBlock = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+    <div><div class="card-title" style="margin-bottom:4px">Domain Controllers</div>
+      ${(r.domain_controllers||[]).length ? r.domain_controllers.map(dc=>`<div style="font-size:.82rem;padding:2px 0">${adE(dc)}</div>`).join('') : '<span style="color:var(--text3);font-size:.82rem">None recorded</span>'}
+    </div>
+    <div><div class="card-title" style="margin-bottom:4px">Auth Packages / Processes</div>
+      <div style="font-size:.82rem">${(r.auth_packages||[]).concat(r.logon_processes||[]).join(', ') || '—'}</div>
+      ${r.is_kerberos ? '<div style="margin-top:4px"><span class="badge-warn">KERBEROS</span></div>' : '<div style="margin-top:4px"><span class="badge-info">NTLM</span></div>'}
+    </div>
+  </div>`;
+
+  // Azure section
+  const az = r.azure || {};
+  const azBlock = `<div style="border-top:1px solid var(--hairline);padding-top:14px;margin-top:4px">
+    <div class="card-title" style="margin-bottom:10px">☁ Azure AD / Entra ID Sign-ins (last ${r.window_hours}h)</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      ${[
+        ['Total Sign-ins', az.total],
+        ['✅ Successes', az.successes],
+        ['❌ Failures', az.failures],
+        ['MFA Failures', az.mfa_failures],
+      ].map(([l,v]) => `<div class="stat-card" style="padding:8px 10px"><div class="stat-label" style="font-size:.7rem">${l}</div><div class="stat-val" style="font-size:1.3rem">${v ?? '—'}</div></div>`).join('')}
+    </div>
+    ${az.error_summary?.length ? `<div style="margin-bottom:10px">
+      <div style="font-size:.75rem;font-weight:600;color:var(--text2);margin-bottom:4px">Azure Failure Reasons</div>
+      ${az.error_summary.map(e=>`<div style="font-size:.82rem;display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--hairline)"><span>${adE(e.reason)}</span><span class="badge-crit">${e.count}×</span></div>`).join('')}
+    </div>` : ''}
+    ${az.failed_apps?.length ? `<div style="margin-bottom:8px"><span style="font-size:.75rem;font-weight:600;color:var(--text2)">Failed Apps: </span><span style="font-size:.82rem">${az.failed_apps.map(adE).join(', ')}</span></div>` : ''}
+    ${az.source_ips?.length ? `<div style="margin-bottom:8px"><span style="font-size:.75rem;font-weight:600;color:var(--text2)">Azure IPs: </span><code style="font-size:.8rem">${az.source_ips.join(', ')}</code></div>` : ''}
+    ${az.locations?.length ? `<div style="margin-bottom:8px"><span style="font-size:.75rem;font-weight:600;color:var(--text2)">Locations: </span><span style="font-size:.82rem">${az.locations.join(', ')}</span></div>` : ''}
+    ${az.sign_ins?.length ? `<div style="height:180px;margin-bottom:10px"><canvas id="lo-az-chart"></canvas></div>` : ''}
+    ${az.sign_ins?.length ? `<div class="sp-table-wrap">${loTbl(['time','app','status','error','ip','location','client','device'],az.sign_ins.slice(0,20))}</div>` : '<div style="color:var(--text3);font-size:.82rem">No Azure sign-in data (requires UPN with @domain).</div>'}
+  </div>`;
+
+  // Raw ES events
+  const evtBlock = r.events?.length ? `<div style="border-top:1px solid var(--hairline);padding-top:14px;margin-top:14px">
+    <div class="card-title" style="margin-bottom:6px">All ES Events (${r.events.length})</div>
+    <div class="sp-table-wrap">${loTbl(['timestamp','event_type','caller_machine','logon_type','ip','domain_controller'],r.events)}</div>
+  </div>` : '';
+
+  return `<div style="padding:2px 0">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div style="font-size:1.15rem;font-weight:700">${sevEmoji} <span style="color:var(--text)">${adE(r.username)}</span></div>
+      <span style="background:${sevColor};color:#fff;font-size:.7rem;font-weight:700;padding:2px 9px;border-radius:99px;text-transform:uppercase">${sev}</span>
+      <span style="color:var(--text3);font-size:.78rem">last ${r.window_hours}h</span>
+    </div>
+    ${machineBlock}${kpiRow}${ltBlock}${burstBlock}${infraBlock}${azBlock}${evtBlock}
+  </div>`;
+}
+
+function loTbl(cols, rows) {
+  if (!rows?.length) return '<div style="color:var(--text3);font-size:.82rem">No data</div>';
+  const hdr = cols.map(c=>`<th>${adE(c.replace(/_/g,' '))}</th>`).join('');
   const body = rows.map(row => {
     const cells = cols.map(c => {
-      const v = row[c] ?? '';
-      if (c === barCol && typeof v === 'number') {
-        const pct = Math.round(v / maxBar * 100);
-        return `<td><div style="display:flex;align-items:center;gap:8px">
-          <div style="flex:1;background:rgba(239,68,68,.12);border-radius:4px;height:8px">
-            <div style="width:${pct}%;background:var(--crit);height:8px;border-radius:4px"></div>
-          </div>
-          <span style="min-width:36px;text-align:right;font-weight:600">${v}</span>
-        </div></td>`;
+      let v = row[c] ?? '';
+      if (c === 'timestamp' || c === 'time') v = String(v).replace('T',' ').substring(0,19);
+      if (c === 'status') return `<td>${v}</td>`;
+      if (c === 'event_type') {
+        const cls = v === 'Lockout' ? 'badge-crit' : v === 'Failed Logon' ? 'badge-warn' : 'badge-info';
+        return `<td><span class="${cls}">${adE(String(v))}</span></td>`;
       }
-      if (c === 'timestamp') return `<td style="color:var(--text2);font-size:.78rem;white-space:nowrap">${adE(String(v).replace('T',' ').substring(0,19))}</td>`;
-      return `<td>${adE(String(v))}</td>`;
+      if (c === 'caller_machine' && v) return `<td><strong style="color:var(--crit)">${adE(String(v))}</strong></td>`;
+      return `<td style="font-size:.8rem">${adE(String(v))}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');

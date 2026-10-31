@@ -309,6 +309,8 @@ code, pre, .mono, .ad-tbl .mono { font-family: var(--mono); }
 .badge-crit, .sp-sev.high, .sp-sev.critical { background: color-mix(in srgb, var(--crit) 13%, transparent); color: var(--crit); }
 .badge-info { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); }
 .badge-grey, .ad-tag { background: var(--fill); color: var(--text2); }
+.lo-acct-row { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--hairline); cursor: pointer; transition: background .15s; }
+.lo-acct-row:hover { background: var(--fill); }
 .ad-sevchip.critical { background: color-mix(in srgb, var(--crit) 12%, transparent); color: var(--crit); border-color: transparent; }
 .ad-sevchip.warning  { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); border-color: transparent; }
 .ad-sevchip.info     { background: color-mix(in srgb, var(--info) 12%, transparent); color: var(--info); border-color: transparent; }

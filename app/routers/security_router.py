@@ -51,6 +51,17 @@ async def lockouts(
     username: str = Query(""),
     _: dict = Depends(get_current_user),
 ):
-    """Account lockout events (4740) and failed logon summary (4625) from Elasticsearch."""
+    """Account lockout events (4740/4625/4771) overview from Elasticsearch."""
     from app.services import es_service as es
     return await es.get_lockout_events(hours=hours, username=username)
+
+
+@router.get("/lockouts/triage")
+async def lockout_triage(
+    username: str = Query(..., min_length=1),
+    hours: int = Query(24, ge=1, le=168),
+    _: dict = Depends(get_current_user),
+):
+    """Full lockout triage for one user: ES events (4740/4625/4771) + Azure AD sign-in correlation."""
+    from app.services import es_service as es
+    return await es.get_user_lockout_triage(username=username, hours=hours)

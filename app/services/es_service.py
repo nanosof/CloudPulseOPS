@@ -753,90 +753,427 @@ async def aggregate_daily_capacity(report_date: str | None = None) -> int:
 # Connection test (index-level only — no cluster privileges needed)
 # ─────────────────────────────────────────────────────────────────
 
+# Correct index for Windows Security event logs (Elastic Agent data stream)
+_IDX_SEC = ".ds-logs-system.security-*,logs-system.security*,winlogbeat-*"
+
+def _user_filter(username: str) -> dict:
+    """Match username across all 4 fields used by different Elastic Agent versions."""
+    safe = username.replace("*", "").replace("?", "")
+    return {"bool": {"should": [
+        {"term":     {"winlog.event_data.TargetUserName": safe}},
+        {"term":     {"user.target.name": safe}},
+        {"term":     {"related.user": safe}},
+        {"term":     {"winlog.event_data.SubjectUserName": safe}},
+    ], "minimum_should_match": 1}}
+
+
+def _extract_caller(lockouts: list, failures: list) -> tuple[str, str]:
+    """
+    5-layer CallerComputerName extraction (mirrors n8n Correlate AD Events node).
+    Returns (machine_name, source_description).
+    """
+    import re as _re
+
+    def clean(v: str) -> str:
+        v = (v or "").replace("\\\\", "").replace("\\", "").strip()
+        return "" if v in ("-", "") else v
+
+    def from_message(msg: str) -> str:
+        if not msg:
+            return ""
+        m = _re.search(r"Caller\s+Computer\s+Name:\s*\\{0,2}([^\n\r\s]+)", msg, _re.I)
+        return clean(m.group(1)) if m and m.group(1) else ""
+
+    # Layer 1 – CallerComputerName on 4740
+    for h in lockouts:
+        v = clean((h.get("winlog") or {}).get("event_data", {}).get("CallerComputerName", ""))
+        if v:
+            return v, "CallerComputerName (Event 4740)"
+
+    # Layer 2 – parse from message text
+    for h in lockouts:
+        v = from_message(h.get("message", ""))
+        if v:
+            return v, "CallerComputerName (parsed from message)"
+
+    # Layer 3 – WorkstationName on 4625
+    for h in failures:
+        v = clean((h.get("winlog") or {}).get("event_data", {}).get("WorkstationName", ""))
+        if v:
+            return v, "WorkstationName (Event 4625)"
+
+    # Layer 4 – SubjectComputerName on 4740
+    for h in lockouts:
+        v = clean((h.get("winlog") or {}).get("event_data", {}).get("SubjectComputerName", ""))
+        if v:
+            return v, "SubjectComputerName (Event 4740)"
+
+    # Layer 5 – source.domain or host.hostname
+    for h in lockouts + failures:
+        v = clean(h.get("source", {}).get("domain", "") or (h.get("host") or {}).get("hostname", ""))
+        if v:
+            return v, "source.domain / host.hostname"
+
+    return "", "Not found in any field"
+
+
+def _burst_analysis(timestamps: list[str]) -> list[dict]:
+    """Group consecutive timestamps within 5-min windows into bursts."""
+    from datetime import datetime as _dt, timezone as _tz
+    ts = sorted(t for t in timestamps if t)
+    if not ts:
+        return []
+    bursts, burst = [], [ts[0]]
+    for i in range(1, len(ts)):
+        try:
+            diff = (_dt.fromisoformat(ts[i].replace("Z", "+00:00")) -
+                    _dt.fromisoformat(ts[i - 1].replace("Z", "+00:00"))).total_seconds()
+        except Exception:
+            diff = 999
+        if diff < 300:
+            burst.append(ts[i])
+        else:
+            bursts.append(burst)
+            burst = [ts[i]]
+    bursts.append(burst)
+    return [{"start": b[0], "end": b[-1], "count": len(b)} for b in bursts]
+
+
 async def get_lockout_events(hours: int = 24, username: str = "") -> Dict:
-    """
-    Query Elasticsearch for Windows account lockout (4740) and failed logon (4625) events.
-    Returns events list, per-account/DC/source summaries and an hourly timeline.
-    """
+    """Overview: recent lockout events + per-account / DC / source summaries."""
     hours = max(1, min(int(hours), 720))
     window = f"now-{hours}h"
-    idx = "logs-system.security*,winlogbeat-*,logs-windows*"
 
-    base_filters: List[Dict] = [{"range": {"@timestamp": {"gte": window}}}]
+    base_filter: list = [{"range": {"@timestamp": {"gte": window}}}]
     if username:
-        base_filters.append({"wildcard": {"winlog.event_data.TargetUserName": f"*{username}*"}})
+        base_filter.append(_user_filter(username))
 
-    lockout_body = {
+    events_body = {
         "size": 500,
         "sort": [{"@timestamp": {"order": "desc"}}],
-        "query": {"bool": {"filter": base_filters + [{"term": {"winlog.event_id": 4740}}]}},
+        "query": {"bool": {"filter": base_filter,
+                           "must": [{"terms": {"winlog.event_id": ["4740", "4625", "4771"]}}]}},
         "_source": ["@timestamp", "winlog.event_id", "winlog.event_data.TargetUserName",
-                    "winlog.event_data.TargetDomainName", "winlog.event_data.SubjectUserName",
-                    "winlog.event_data.SubjectDomainName", "winlog.event_data.SubjectMachineName",
-                    "winlog.computer_name", "host.name", "host.hostname"],
+                    "winlog.event_data.TargetDomainName", "winlog.event_data.CallerComputerName",
+                    "winlog.event_data.WorkstationName", "winlog.event_data.SubjectMachineName",
+                    "winlog.event_data.LogonType", "winlog.computer_name",
+                    "user.target.name", "related.user", "host.hostname", "message"],
     }
-    failures_body = {
+    aggs_body = {
         "size": 0,
-        "query": {"bool": {"filter": base_filters + [{"term": {"winlog.event_id": 4625}}]}},
+        "query": {"bool": {"filter": base_filter,
+                           "must": [{"terms": {"winlog.event_id": ["4740", "4625", "4771"]}}]}},
         "aggs": {
-            "total": {"value_count": {"field": "winlog.event_id"}},
-            "by_user": {"terms": {"field": "winlog.event_data.TargetUserName.keyword",
-                                   "size": 20, "order": {"_count": "desc"}}},
-            "by_source": {"terms": {"field": "winlog.event_data.WorkstationName.keyword",
-                                     "size": 15, "order": {"_count": "desc"}}},
-            "by_dc": {"terms": {"field": "winlog.computer_name.keyword",
-                                 "size": 10, "order": {"_count": "desc"}}},
-            "timeline": {"date_histogram": {"field": "@timestamp",
-                                             "calendar_interval": "1h" if hours <= 72 else "1d",
-                                             "min_doc_count": 1}},
+            "by_user":    {"terms": {"field": "winlog.event_data.TargetUserName.keyword", "size": 30,
+                                      "order": {"_count": "desc"}}},
+            "by_source":  {"terms": {"field": "winlog.event_data.WorkstationName.keyword", "size": 20}},
+            "by_dc":      {"terms": {"field": "winlog.computer_name.keyword", "size": 10}},
+            "by_event":   {"terms": {"field": "winlog.event_id", "size": 5}},
+            "timeline":   {"date_histogram": {"field": "@timestamp",
+                                               "calendar_interval": "1h" if hours <= 72 else "1d",
+                                               "min_doc_count": 1}},
         },
     }
 
     try:
-        lr, fr = await asyncio.gather(
-            _post(f"/{idx}/_search?ignore_unavailable=true", lockout_body),
-            _post(f"/{idx}/_search?ignore_unavailable=true", failures_body),
+        er, ar = await asyncio.gather(
+            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", events_body),
+            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", aggs_body),
         )
     except Exception as e:
         return {"error": str(e), "events": [], "by_account": [], "by_source_machine": [],
-                "by_dc": [], "failed_logons_total": 0, "failed_logon_timeline": []}
+                "by_dc": [], "total_lockout_events": 0, "failed_logons_total": 0}
 
-    events = []
-    for h in (lr.get("hits") or {}).get("hits", []):
+    hits = (er.get("hits") or {}).get("hits", [])
+    aggs = ar.get("aggregations") or {}
+
+    def _parse_hit(h: dict) -> dict:
         s = h.get("_source", {})
         wl = s.get("winlog") or {}
         ed = wl.get("event_data") or {}
-        events.append({
+        eid = str(wl.get("event_id", ""))
+        acct = (ed.get("TargetUserName") or (s.get("user") or {}).get("target", {}).get("name")
+                or (s.get("related") or {}).get("user", [""])[0] if isinstance(
+                    (s.get("related") or {}).get("user"), list) else ed.get("TargetUserName") or "")
+        caller = (ed.get("CallerComputerName") or ed.get("WorkstationName") or
+                  ed.get("SubjectMachineName") or "").replace("\\\\", "").strip("-").strip()
+        return {
             "timestamp": s.get("@timestamp", ""),
-            "locked_account": ed.get("TargetUserName", ""),
+            "event_id": eid,
+            "event_type": {"4740": "Lockout", "4625": "Failed Logon", "4771": "Kerberos Failure"}.get(eid, eid),
+            "account": acct,
             "domain": ed.get("TargetDomainName", ""),
-            "caller_machine": ed.get("SubjectMachineName", "") or ed.get("SubjectUserName", ""),
+            "caller_machine": caller,
+            "logon_type": ed.get("LogonType", ""),
             "domain_controller": wl.get("computer_name", "") or (s.get("host") or {}).get("hostname", ""),
-        })
+        }
 
     from collections import Counter as _Counter
-    by_acct = _Counter(e["locked_account"] for e in events if e["locked_account"])
-    by_dc   = _Counter(e["domain_controller"] for e in events if e["domain_controller"])
-    by_src  = _Counter(e["caller_machine"] for e in events if e["caller_machine"])
+    events = [_parse_hit(h) for h in hits]
+    lockouts = [e for e in events if e["event_id"] == "4740"]
+    failures = [e for e in events if e["event_id"] == "4625"]
 
-    aggs = fr.get("aggregations") or {}
-    fail_total = (aggs.get("total") or {}).get("value", 0)
+    by_acct = _Counter(e["account"] for e in lockouts if e["account"])
+    unique_accounts = [{"account": k, "lockouts": v, "last_seen": next(
+        (e["timestamp"] for e in lockouts if e["account"] == k), "")}
+        for k, v in by_acct.most_common(30)]
 
     return {
         "window_hours": hours,
-        "total_lockout_events": len(events),
+        "total_lockout_events": len(lockouts),
         "unique_accounts_locked": len(by_acct),
-        "failed_logons_total": fail_total,
+        "failed_logons_total": len(failures),
+        "kerberos_failures": len([e for e in events if e["event_id"] == "4771"]),
         "events": events[:200],
-        "by_account": [{"account": k, "lockouts": v} for k, v in by_acct.most_common(20)],
-        "by_source_machine": [{"machine": k, "lockouts": v} for k, v in by_src.most_common(15)],
-        "by_dc": [{"dc": k, "lockouts": v} for k, v in by_dc.most_common(10)],
-        "failed_logons_by_account": [{"account": b["key"], "failures": b["doc_count"]}
-                                      for b in (aggs.get("by_user") or {}).get("buckets", [])],
-        "failed_logons_by_source": [{"machine": b["key"], "failures": b["doc_count"]}
-                                     for b in (aggs.get("by_source") or {}).get("buckets", [])],
-        "failed_logon_timeline": [{"time": b["key_as_string"], "failures": b["doc_count"]}
+        "by_account": unique_accounts,
+        "by_source_machine": [{"machine": b["key"], "count": b["doc_count"]}
+                               for b in (aggs.get("by_source") or {}).get("buckets", []) if b["key"].strip("-")],
+        "by_dc": [{"dc": b["key"], "count": b["doc_count"]}
+                  for b in (aggs.get("by_dc") or {}).get("buckets", [])],
+        "failed_logon_timeline": [{"time": b["key_as_string"], "count": b["doc_count"]}
                                    for b in (aggs.get("timeline") or {}).get("buckets", [])],
+    }
+
+
+async def get_user_lockout_triage(username: str, hours: int = 24) -> Dict:
+    """
+    Full triage for one user: ES lockout/failure/Kerberos events + Azure AD sign-in correlation.
+    Mirrors the n8n Account Lockout Agent workflow logic.
+    """
+    hours = max(1, min(int(hours), 168))
+    window = f"now-{hours}h"
+    short_user = username.split("@")[0] if "@" in username else username
+
+    es_body = {
+        "size": 50,
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "query": {"bool": {
+            "filter": [{"range": {"@timestamp": {"gte": window}}}],
+            "must": [
+                _user_filter(short_user),
+                {"bool": {"should": [
+                    {"terms": {"winlog.event_id": ["4740", "4625", "4771"]}},
+                    {"terms": {"event.action": ["locked-out-user-account",
+                                                "logon-failed",
+                                                "kerberos-pre-authentication-failed"]}},
+                ], "minimum_should_match": 1}},
+            ],
+        }},
+        "_source": ["@timestamp", "winlog.event_id", "event.action",
+                    "winlog.event_data.TargetUserName", "winlog.event_data.TargetDomainName",
+                    "winlog.event_data.CallerComputerName", "winlog.event_data.WorkstationName",
+                    "winlog.event_data.SubjectComputerName", "winlog.event_data.SubjectMachineName",
+                    "winlog.event_data.SubjectUserName", "winlog.event_data.LogonType",
+                    "winlog.event_data.LogonProcessName", "winlog.event_data.AuthenticationPackageName",
+                    "winlog.event_data.IpAddress", "winlog.computer_name",
+                    "user.target.name", "related.user", "source.domain", "source.ip",
+                    "host.hostname", "message"],
+    }
+
+    # Run ES + Azure sign-in query in parallel
+    async def _azure_signins() -> list:
+        try:
+            from app.services import graph_service as g
+            from datetime import datetime, timezone, timedelta
+            since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            upn = username if "@" in username else None
+            if not upn:
+                return []
+            params = {
+                "$filter": f"userPrincipalName eq '{upn}' and createdDateTime ge {since}",
+                "$top": "50",
+                "$orderby": "createdDateTime desc",
+                "$select": ("createdDateTime,userDisplayName,userPrincipalName,appDisplayName,"
+                            "ipAddress,location,status,deviceDetail,clientAppUsed,"
+                            "conditionalAccessStatus,riskLevelDuringSignIn,riskState,"
+                            "riskDetail,resourceDisplayName,isInteractive,authenticationRequirement"),
+            }
+            data = await g.get("/auditLogs/signIns", params)
+            return data.get("value", [])
+        except Exception:
+            return []
+
+    try:
+        es_r, azure_signins = await asyncio.gather(
+            _post(f"/{_IDX_SEC}/_search?ignore_unavailable=true", es_body),
+            _azure_signins(),
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+    all_hits = (es_r.get("hits") or {}).get("hits", [])
+    sources = [h.get("_source", {}) for h in all_hits]
+
+    def eid(s: dict) -> str:
+        return str((s.get("winlog") or {}).get("event_id", ""))
+
+    lockout_src = [s for s in sources if eid(s) == "4740" or
+                   (s.get("event") or {}).get("action") == "locked-out-user-account"]
+    failure_src = [s for s in sources if eid(s) == "4625" or
+                   (s.get("event") or {}).get("action") == "logon-failed"]
+    kerb_src    = [s for s in sources if eid(s) == "4771" or
+                   (s.get("event") or {}).get("action") == "kerberos-pre-authentication-failed"]
+
+    # Extract username
+    ad_username = short_user
+    for s in lockout_src + failure_src:
+        wl = s.get("winlog") or {}
+        ed = wl.get("event_data") or {}
+        u = (ed.get("TargetUserName") or (s.get("user") or {}).get("target", {}).get("name", "") or "")
+        if u and u not in ("-", ""):
+            ad_username = u
+            break
+
+    # CallerComputerName (5-layer)
+    def _wl_ed(s: dict) -> dict:
+        return (s.get("winlog") or {}).get("event_data") or {}
+
+    caller_machine, caller_source = _extract_caller(
+        [{"winlog": s.get("winlog", {}), "message": s.get("message", "")} for s in lockout_src],
+        [{"winlog": s.get("winlog", {})} for s in failure_src],
+    )
+    is_kerberos = not caller_machine and len(lockout_src) > 0
+
+    # Domain controllers
+    all_dcs = list(dict.fromkeys(
+        (s.get("winlog") or {}).get("computer_name", "") or (s.get("host") or {}).get("hostname", "")
+        for s in sources if (s.get("winlog") or {}).get("computer_name") or (s.get("host") or {}).get("hostname")
+    ))
+
+    # IPs from AD events
+    ad_ips = list(dict.fromkeys(
+        ip for s in failure_src + lockout_src
+        for ip in [_wl_ed(s).get("IpAddress", ""), (s.get("source") or {}).get("ip", "")]
+        if ip and ip not in ("-", "::1", "127.0.0.1", "")
+    ))
+
+    # Logon type summary
+    from collections import Counter as _Counter
+    lt_counts = _Counter(
+        _wl_ed(s).get("LogonType", "") for s in failure_src + lockout_src
+        if _wl_ed(s).get("LogonType")
+    )
+    logon_type_map = {
+        "2": "Interactive (console/keyboard)", "3": "Network (shares/VPN/IIS)",
+        "4": "Batch (scheduled task)", "5": "Service (Windows service)",
+        "7": "Unlock (workstation unlock)", "8": "NetworkCleartext (legacy web/IIS)",
+        "9": "NewCredentials (runas/impersonation)", "10": "RemoteInteractive (RDP)",
+        "11": "CachedInteractive (offline cached logon)",
+    }
+    logon_type_summary = [
+        {"type": lt, "description": logon_type_map.get(str(lt), f"Type {lt}"), "count": cnt}
+        for lt, cnt in lt_counts.most_common()
+    ]
+
+    # Auth packages
+    auth_packages = list(dict.fromkeys(
+        _wl_ed(s).get("AuthenticationPackageName", "") for s in failure_src
+        if _wl_ed(s).get("AuthenticationPackageName")
+    ))
+    logon_processes = list(dict.fromkeys(
+        _wl_ed(s).get("LogonProcessName", "") for s in failure_src
+        if _wl_ed(s).get("LogonProcessName")
+    ))
+
+    # Lockout burst analysis
+    lockout_ts = [s.get("@timestamp", "") for s in lockout_src if s.get("@timestamp")]
+    bursts = _burst_analysis(lockout_ts)
+
+    # Build event rows for display
+    def _row(s: dict) -> dict:
+        wl = s.get("winlog") or {}
+        ed = wl.get("event_data") or {}
+        eid_v = str(wl.get("event_id", ""))
+        caller = (ed.get("CallerComputerName") or ed.get("WorkstationName") or
+                  ed.get("SubjectMachineName") or "").replace("\\\\", "").strip("-").strip()
+        return {
+            "timestamp": s.get("@timestamp", ""),
+            "event_id": eid_v,
+            "event_type": {"4740": "Lockout", "4625": "Failed Logon", "4771": "Kerberos Failure"}.get(eid_v, eid_v),
+            "caller_machine": caller or caller_machine,
+            "logon_type": ed.get("LogonType", ""),
+            "ip": ed.get("IpAddress", "") or (s.get("source") or {}).get("ip", ""),
+            "domain_controller": wl.get("computer_name", "") or (s.get("host") or {}).get("hostname", ""),
+            "auth_package": ed.get("AuthenticationPackageName", ""),
+        }
+
+    # Azure sign-in analysis
+    ERROR_MAP = {
+        50126: "Invalid username or password",
+        50053: "Account locked (IDS lock)",
+        50055: "Password expired",
+        50057: "Account disabled",
+        53000: "Conditional Access / MFA required",
+        53003: "Blocked by Conditional Access policy",
+    }
+    az_failures = [s for s in azure_signins if (s.get("status") or {}).get("errorCode", 0) != 0]
+    az_successes = [s for s in azure_signins if (s.get("status") or {}).get("errorCode", 0) == 0]
+    az_err_counts = _Counter(
+        ERROR_MAP.get((s.get("status") or {}).get("errorCode"), f"Error {(s.get('status') or {}).get('errorCode')}")
+        for s in az_failures
+    )
+    az_apps_failed  = list(dict.fromkeys(s.get("appDisplayName", "") for s in az_failures if s.get("appDisplayName")))
+    az_apps_success = list(dict.fromkeys(s.get("appDisplayName", "") for s in az_successes if s.get("appDisplayName")))
+    az_ips = list(dict.fromkeys(s.get("ipAddress", "") for s in azure_signins if s.get("ipAddress")))
+    az_locs = list(dict.fromkeys(
+        (s.get("location") or {}).get("countryOrRegion", "") for s in azure_signins
+        if (s.get("location") or {}).get("countryOrRegion")
+    ))
+    az_clients = list(dict.fromkeys(s.get("clientAppUsed", "") for s in azure_signins if s.get("clientAppUsed")))
+    mfa_failures = sum(1 for s in az_failures if s.get("authenticationRequirement") == "multiFactorAuthentication")
+
+    severity = "low"
+    total_events = len(lockout_src) + len(failure_src)
+    if len(lockout_src) >= 10 or total_events >= 50:
+        severity = "critical"
+    elif len(lockout_src) >= 5 or total_events >= 20:
+        severity = "high"
+    elif len(lockout_src) >= 2 or total_events >= 10:
+        severity = "medium"
+
+    return {
+        "username": ad_username,
+        "window_hours": hours,
+        "severity": severity,
+        "is_kerberos": is_kerberos,
+        "caller_machine": caller_machine,
+        "caller_machine_source": caller_source,
+        "all_ips": list(dict.fromkeys(ad_ips + az_ips)),
+        "ad_ips": ad_ips,
+        "domain_controllers": all_dcs[:10],
+        "auth_packages": auth_packages,
+        "logon_processes": logon_processes,
+        "lockout_count": len(lockout_src),
+        "failed_logon_count": len(failure_src),
+        "kerberos_failure_count": len(kerb_src),
+        "logon_type_summary": logon_type_summary,
+        "lockout_bursts": bursts,
+        "events": [_row(s) for s in sources],
+        "azure": {
+            "total": len(azure_signins),
+            "successes": len(az_successes),
+            "failures": len(az_failures),
+            "mfa_failures": mfa_failures,
+            "failed_apps": az_apps_failed,
+            "successful_apps": az_apps_success,
+            "source_ips": az_ips,
+            "locations": az_locs,
+            "client_apps": az_clients,
+            "error_summary": [{"reason": k, "count": v} for k, v in az_err_counts.most_common()],
+            "sign_ins": [
+                {"time": s.get("createdDateTime", ""),
+                 "app": s.get("appDisplayName", ""),
+                 "status": "✅ Success" if (s.get("status") or {}).get("errorCode", 0) == 0 else "❌ Failed",
+                 "error": ERROR_MAP.get((s.get("status") or {}).get("errorCode"), ""),
+                 "ip": s.get("ipAddress", ""),
+                 "location": f"{(s.get('location') or {}).get('city', '')} {(s.get('location') or {}).get('countryOrRegion', '')}".strip(),
+                 "client": s.get("clientAppUsed", ""),
+                 "device": (s.get("deviceDetail") or {}).get("displayName", ""),
+                 "risk": s.get("riskLevelDuringSignIn", ""),
+                 "mfa": s.get("authenticationRequirement", "")}
+                for s in azure_signins[:50]
+            ],
+        },
     }
 
 
