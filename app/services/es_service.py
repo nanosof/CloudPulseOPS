@@ -433,10 +433,30 @@ async def list_windows_servers(query: str = "", limit: int = 50) -> List[str]:
 
 async def get_fleet_summary(minutes: int = 60) -> Dict:
     """
-    Returns total Windows Server count and how many are in each severity band.
-    Tries the requested window first; falls back to 24h if no servers found.
+    Returns total Windows Server count (from inventory DB) and severity bands
+    (from Elasticsearch live CPU data).
+
+    Total comes from the inventory table so the count is stable even when servers
+    temporarily stop reporting to Elasticsearch.  Only rows with monitored=TRUE
+    and os_name ILIKE 'Windows Server%' are counted — workstations, desktops,
+    and decommissioned hosts are excluded.
     """
-    async def _query(window_minutes: int):
+    from sqlalchemy import text
+    from app.database import AsyncSessionLocal
+
+    # ── Stable total: inventory DB, Windows Server OS only ───────────
+    try:
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(text(
+                "SELECT COUNT(*) FROM cloudpulse_server_inventory "
+                "WHERE monitored = TRUE AND os_name ILIKE 'Windows Server%'"
+            ))).fetchone()
+            db_total = int(row[0]) if row else 0
+    except Exception:
+        db_total = 0
+
+    # ── Severity bands: live ES CPU data ────────────────────────────
+    async def _severity_bands(window_minutes: int):
         body = {
             "size": 0,
             "query": {"bool": {"filter": [
@@ -444,7 +464,6 @@ async def get_fleet_summary(minutes: int = 60) -> Dict:
                 _SERVER_FILTER,
             ]}},
             "aggs": {
-                "total_servers": {"cardinality": {"field": "host.name"}},
                 "by_host": {
                     "terms": {"field": "host.name", "size": 500},
                     "aggs": {
@@ -454,7 +473,6 @@ async def get_fleet_summary(minutes: int = 60) -> Dict:
             }
         }
         r = await _post(f"/{_IDX_CPU}/_search", body)
-        total = r.get("aggregations", {}).get("total_servers", {}).get("value", 0)
         critical = warning = ok = 0
         for b in r.get("aggregations", {}).get("by_host", {}).get("buckets", []):
             pct = (b.get("avg_cpu", {}).get("value") or 0) * 100
@@ -462,17 +480,19 @@ async def get_fleet_summary(minutes: int = 60) -> Dict:
             if sev == "critical":   critical += 1
             elif sev == "warning":  warning  += 1
             else:                   ok       += 1
-        return {"total": total, "critical": critical, "warning": warning, "ok": ok, "window_minutes": window_minutes}
+        return critical, warning, ok
 
     try:
-        result = await _query(minutes)
-        # If no servers found with the requested window, widen to 24h automatically
-        if result.get("total", 0) == 0 and minutes < 1440:
-            result = await _query(1440)
-            result["window_fallback"] = True
-        return result
+        critical, warning, ok = await _severity_bands(minutes)
+        # If no servers are actively reporting in the requested window, widen to 24h
+        if (critical + warning + ok) == 0 and minutes < 1440:
+            critical, warning, ok = await _severity_bands(1440)
+            return {"total": db_total, "critical": critical, "warning": warning, "ok": ok,
+                    "window_minutes": minutes, "window_fallback": True}
+        return {"total": db_total, "critical": critical, "warning": warning, "ok": ok,
+                "window_minutes": minutes}
     except Exception as e:
-        return {"total": 0, "critical": 0, "warning": 0, "ok": 0, "error": str(e)}
+        return {"total": db_total, "critical": 0, "warning": 0, "ok": 0, "error": str(e)}
 
 
 # ─────────────────────────────────────────────────────────────────
