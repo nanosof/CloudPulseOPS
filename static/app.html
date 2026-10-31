@@ -2160,11 +2160,21 @@ let _modalLiveWindow = 5;   // minutes: 1 | 5 | 10 | 15
 async function openServerModal(serverName, fromMetric) {
   _currentServer = serverName;
   _currentServerMetric = fromMetric || null;
-  _modalProcSortBy = 'cpu';
-  document.getElementById('server-modal-title').textContent = '🖥️ ' + serverName;
+  // Auto-sort processes by memory when opening from memory context
+  _modalProcSortBy = (fromMetric === 'memory') ? 'memory' : 'cpu';
+  const metricLabel = fromMetric ? ` — ${fromMetric.charAt(0).toUpperCase()+fromMetric.slice(1)} View` : '';
+  document.getElementById('server-modal-title').textContent = '🖥️ ' + serverName + metricLabel;
   document.getElementById('server-modal-body').innerHTML = '<div class="loading"><div class="spinner"></div>Loading live server data…</div>';
   openModal('server-modal');
   await _loadServerModalData();
+  // Auto-scroll to disk section when opened from disk context
+  if (fromMetric === 'disk') {
+    setTimeout(() => {
+      const body = document.getElementById('server-modal-body');
+      const diskSection = body?.querySelector('.table-wrap');
+      if (diskSection) diskSection.scrollIntoView({behavior:'smooth', block:'nearest'});
+    }, 300);
+  }
 }
 
 async function _loadServerModalData() {
@@ -2330,9 +2340,9 @@ function renderServerDetail(d, hist) {
     <div id="srv-modal-proc-section">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <div class="card-title" style="margin:0">Top 10 Processes</div>
-        <button class="btn btn-secondary btn-sm" onclick="switchProcSort('cpu')" id="psort-cpu" style="background:var(--accent);color:#0B1120">CPU</button>
-        <button class="btn btn-secondary btn-sm" onclick="switchProcSort('memory')" id="psort-mem">Memory</button>
-        <span id="proc-sort-label" style="font-size:.72rem;color:var(--text3)">sorted by CPU</span>
+        <button class="btn btn-secondary btn-sm" onclick="switchProcSort('cpu')" id="psort-cpu" style="${_modalProcSortBy==='cpu'?'background:var(--accent);color:#0B1120':''}">CPU</button>
+        <button class="btn btn-secondary btn-sm" onclick="switchProcSort('memory')" id="psort-mem" style="${_modalProcSortBy==='memory'?'background:var(--accent);color:#0B1120':''}">Memory</button>
+        <span id="proc-sort-label" style="font-size:.72rem;color:var(--text3)">sorted by ${_modalProcSortBy}</span>
       </div>
       ${procs.length ? `<div class="table-wrap" id="proc-table-wrap">
         <table><thead><tr><th>#</th><th>Process</th><th>CPU%</th><th>Mem (MB)</th></tr></thead>
