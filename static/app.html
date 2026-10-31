@@ -897,6 +897,8 @@ code,pre,.mono{font-family:var(--mono);font-size:.82rem}
           <button class="btn btn-primary btn-sm" onclick="lockoutTriage()" style="padding:4px 12px">Triage ▶</button>
         </div>
         <div class="tab-bar" id="lo-window-tabs">
+          <div class="tab-btn" onclick="lockoutWin(0.25,this)">15m</div>
+          <div class="tab-btn" onclick="lockoutWin(0.5,this)">30m</div>
           <div class="tab-btn" onclick="lockoutWin(1,this)">1h</div>
           <div class="tab-btn active" onclick="lockoutWin(24,this)">24h</div>
           <div class="tab-btn" onclick="lockoutWin(72,this)">3d</div>
@@ -5967,7 +5969,7 @@ async function lockoutLoad() {
   document.getElementById('lo-window').textContent = '';
   document.getElementById('lo-account-list').innerHTML = '<div class="loading"><div class="spinner"></div>Querying Elasticsearch…</div>';
   try {
-    const r = await apiFetch(`/api/security/lockouts?hours=${_loHours}`);
+    const r = await api('GET', `/api/security/lockouts?hours=${_loHours}`);
     if (r.error) {
       document.getElementById('lo-account-list').innerHTML = `<div class="narrative-box" style="font-size:.82rem">${adE(r.error)}</div>`;
       return;
@@ -6037,7 +6039,7 @@ async function lockoutTriageUser(username) {
   const panel = document.getElementById('lo-triage-panel');
   panel.innerHTML = `<div class="loading"><div class="spinner"></div> Querying ES + Azure for <b>${adE(username)}</b>…</div>`;
   try {
-    const r = await apiFetch(`/api/security/lockouts/triage?username=${encodeURIComponent(username)}&hours=${_loHours}`);
+    const r = await api('GET', `/api/security/lockouts/triage?username=${encodeURIComponent(username)}&hours=${_loHours}`);
     if (r.error) { panel.innerHTML = `<div class="narrative-box">${adE(r.error)}</div>`; return; }
     panel.innerHTML = loTriageHTML(r);
     // render timeline chart if present

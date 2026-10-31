@@ -47,7 +47,7 @@ async def device(device_id: str, _: dict = Depends(get_current_user)):
 
 @router.get("/lockouts")
 async def lockouts(
-    hours: int = Query(24, ge=1, le=720),
+    hours: float = Query(24, ge=0.1, le=720),
     username: str = Query(""),
     _: dict = Depends(get_current_user),
 ):
@@ -59,7 +59,7 @@ async def lockouts(
 @router.get("/lockouts/triage")
 async def lockout_triage(
     username: str = Query(..., min_length=1),
-    hours: int = Query(24, ge=1, le=168),
+    hours: float = Query(24, ge=0.1, le=168),
     _: dict = Depends(get_current_user),
 ):
     """Full lockout triage for one user: ES events (4740/4625/4771) + Azure AD sign-in correlation."""
