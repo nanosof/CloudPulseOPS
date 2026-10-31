@@ -1,7 +1,7 @@
 """Security posture, threats, devices and patching — snapshots from Microsoft Graph / Defender."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import get_current_user
 from app.services import ad_service, security_service
@@ -43,3 +43,14 @@ async def device(device_id: str, _: dict = Depends(get_current_user)):
         return await security_service.device_detail(device_id)
     except Exception as e:
         raise HTTPException(502, f"Defender query failed: {e}")
+
+
+@router.get("/lockouts")
+async def lockouts(
+    hours: int = Query(24, ge=1, le=720),
+    username: str = Query(""),
+    _: dict = Depends(get_current_user),
+):
+    """Account lockout events (4740) and failed logon summary (4625) from Elasticsearch."""
+    from app.services import es_service as es
+    return await es.get_lockout_events(hours=hours, username=username)

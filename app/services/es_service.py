@@ -753,6 +753,93 @@ async def aggregate_daily_capacity(report_date: str | None = None) -> int:
 # Connection test (index-level only — no cluster privileges needed)
 # ─────────────────────────────────────────────────────────────────
 
+async def get_lockout_events(hours: int = 24, username: str = "") -> Dict:
+    """
+    Query Elasticsearch for Windows account lockout (4740) and failed logon (4625) events.
+    Returns events list, per-account/DC/source summaries and an hourly timeline.
+    """
+    hours = max(1, min(int(hours), 720))
+    window = f"now-{hours}h"
+    idx = "logs-system.security*,winlogbeat-*,logs-windows*"
+
+    base_filters: List[Dict] = [{"range": {"@timestamp": {"gte": window}}}]
+    if username:
+        base_filters.append({"wildcard": {"winlog.event_data.TargetUserName": f"*{username}*"}})
+
+    lockout_body = {
+        "size": 500,
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "query": {"bool": {"filter": base_filters + [{"term": {"winlog.event_id": 4740}}]}},
+        "_source": ["@timestamp", "winlog.event_id", "winlog.event_data.TargetUserName",
+                    "winlog.event_data.TargetDomainName", "winlog.event_data.SubjectUserName",
+                    "winlog.event_data.SubjectDomainName", "winlog.event_data.SubjectMachineName",
+                    "winlog.computer_name", "host.name", "host.hostname"],
+    }
+    failures_body = {
+        "size": 0,
+        "query": {"bool": {"filter": base_filters + [{"term": {"winlog.event_id": 4625}}]}},
+        "aggs": {
+            "total": {"value_count": {"field": "winlog.event_id"}},
+            "by_user": {"terms": {"field": "winlog.event_data.TargetUserName.keyword",
+                                   "size": 20, "order": {"_count": "desc"}}},
+            "by_source": {"terms": {"field": "winlog.event_data.WorkstationName.keyword",
+                                     "size": 15, "order": {"_count": "desc"}}},
+            "by_dc": {"terms": {"field": "winlog.computer_name.keyword",
+                                 "size": 10, "order": {"_count": "desc"}}},
+            "timeline": {"date_histogram": {"field": "@timestamp",
+                                             "calendar_interval": "1h" if hours <= 72 else "1d",
+                                             "min_doc_count": 1}},
+        },
+    }
+
+    try:
+        lr, fr = await asyncio.gather(
+            _post(f"/{idx}/_search?ignore_unavailable=true", lockout_body),
+            _post(f"/{idx}/_search?ignore_unavailable=true", failures_body),
+        )
+    except Exception as e:
+        return {"error": str(e), "events": [], "by_account": [], "by_source_machine": [],
+                "by_dc": [], "failed_logons_total": 0, "failed_logon_timeline": []}
+
+    events = []
+    for h in (lr.get("hits") or {}).get("hits", []):
+        s = h.get("_source", {})
+        wl = s.get("winlog") or {}
+        ed = wl.get("event_data") or {}
+        events.append({
+            "timestamp": s.get("@timestamp", ""),
+            "locked_account": ed.get("TargetUserName", ""),
+            "domain": ed.get("TargetDomainName", ""),
+            "caller_machine": ed.get("SubjectMachineName", "") or ed.get("SubjectUserName", ""),
+            "domain_controller": wl.get("computer_name", "") or (s.get("host") or {}).get("hostname", ""),
+        })
+
+    from collections import Counter as _Counter
+    by_acct = _Counter(e["locked_account"] for e in events if e["locked_account"])
+    by_dc   = _Counter(e["domain_controller"] for e in events if e["domain_controller"])
+    by_src  = _Counter(e["caller_machine"] for e in events if e["caller_machine"])
+
+    aggs = fr.get("aggregations") or {}
+    fail_total = (aggs.get("total") or {}).get("value", 0)
+
+    return {
+        "window_hours": hours,
+        "total_lockout_events": len(events),
+        "unique_accounts_locked": len(by_acct),
+        "failed_logons_total": fail_total,
+        "events": events[:200],
+        "by_account": [{"account": k, "lockouts": v} for k, v in by_acct.most_common(20)],
+        "by_source_machine": [{"machine": k, "lockouts": v} for k, v in by_src.most_common(15)],
+        "by_dc": [{"dc": k, "lockouts": v} for k, v in by_dc.most_common(10)],
+        "failed_logons_by_account": [{"account": b["key"], "failures": b["doc_count"]}
+                                      for b in (aggs.get("by_user") or {}).get("buckets", [])],
+        "failed_logons_by_source": [{"machine": b["key"], "failures": b["doc_count"]}
+                                     for b in (aggs.get("by_source") or {}).get("buckets", [])],
+        "failed_logon_timeline": [{"time": b["key_as_string"], "failures": b["doc_count"]}
+                                   for b in (aggs.get("timeline") or {}).get("buckets", [])],
+    }
+
+
 async def test_connection() -> dict:
     """
     Verify ES connectivity using a GET _count (no body, no cluster privileges needed).

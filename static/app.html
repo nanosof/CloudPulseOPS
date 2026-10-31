@@ -609,6 +609,11 @@ code,pre,.mono{font-family:var(--mono);font-size:.82rem}
       Patching &amp; Vulns
       <span class="badge" id="nav-patch-badge" style="display:none"></span>
     </div>
+    <div class="nav-item" data-page="lockouts">
+      <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      Account Lockouts
+      <span class="badge" id="nav-lockout-badge" style="display:none"></span>
+    </div>
 
     <div class="sb-section">Operations</div>
     <div class="nav-item" data-page="jira">
@@ -864,6 +869,60 @@ code,pre,.mono{font-family:var(--mono);font-size:.82rem}
       <div id="patching-hero"></div>
       <div class="tab-bar" id="patching-tabs"></div>
       <div id="patching-body"></div>
+    </div>
+
+    <!-- ══════════════════ ACCOUNT LOCKOUTS ══════════════════ -->
+    <div class="page" id="page-lockouts">
+      <div class="page-header">
+        <h2>Account Lockouts</h2>
+        <span class="page-sub">Windows Security Event Log — live from Elasticsearch</span>
+        <button class="btn btn-primary btn-sm" onclick="lockoutLoad()">↻ Refresh</button>
+      </div>
+
+      <!-- KPI row -->
+      <div class="cards-grid" id="lockout-kpis">
+        <div class="stat-card crit">
+          <div class="stat-label">Lockout Events</div>
+          <div class="stat-val" id="lo-total">—</div>
+          <div class="stat-sub" id="lo-window"></div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-label">Unique Accounts Locked</div>
+          <div class="stat-val" id="lo-accounts">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Failed Logons (4625)</div>
+          <div class="stat-val" id="lo-failures">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Top Source Machine</div>
+          <div class="stat-val" style="font-size:1rem" id="lo-top-src">—</div>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="tm-toolbar" style="margin:14px 0 10px">
+        <div class="tab-bar" id="lo-window-tabs">
+          <div class="tab-btn" onclick="lockoutWin(1,this)">1h</div>
+          <div class="tab-btn active" onclick="lockoutWin(24,this)">24h</div>
+          <div class="tab-btn" onclick="lockoutWin(72,this)">3d</div>
+          <div class="tab-btn" onclick="lockoutWin(168,this)">7d</div>
+          <div class="tab-btn" onclick="lockoutWin(336,this)">14d</div>
+        </div>
+        <input class="tb-input" id="lo-user-filter" placeholder="Filter by username…"
+               style="width:220px" oninput="lockoutFilterRender()">
+        <select class="form-select" id="lo-view" style="width:160px" onchange="lockoutRenderView()">
+          <option value="events">Lockout Events</option>
+          <option value="by-account">By Account</option>
+          <option value="by-source">By Source Machine</option>
+          <option value="by-dc">By Domain Controller</option>
+          <option value="failures">Failed Logons</option>
+          <option value="timeline">Timeline</option>
+        </select>
+      </div>
+
+      <div id="lo-body" style="margin-top:6px"></div>
+      <div id="lo-detail" style="margin-top:16px"></div>
     </div>
 
     <!-- ══════════════════ AI ASSISTANT ══════════════════ -->
@@ -1799,13 +1858,14 @@ const PAGE_TITLES = {
   assistant: 'Assistant',
   reports: 'Reports', admin: 'Admin Settings',
   prediction: 'Capacity Forecasting', schedules: '📅 Scheduled Reports',
-  teams: '💬 Teams Alerts'
+  teams: '💬 Teams Alerts', lockouts: '🔐 Account Lockouts'
 };
 const PAGE_LOADERS = {
   dashboard: loadDashboard, capacity: loadCapacity,
   jira: loadTickets, reports: () => loadFleetTrend(),
   admin: loadAdmin, 'ad-health': () => loadAdHealth(),
   'sec-posture': () => spLoad('sec-posture'), threats: () => spLoad('threats'), devices: () => spLoad('devices'), patching: () => spLoad('patching'),
+  lockouts: () => lockoutLoad(),
   assistant: () => aiLoad(),
   prediction: loadPrediction, schedules: loadSchedules,
   teams: loadTeamsAlerts
@@ -5897,6 +5957,127 @@ function aiChart(host, b, d) {
     ${series.length > 1 ? adLegend(series.map((s, i) => [s.label, AD_SER[i]])) : ''}
     <div class="ai-chart" style="height:${horizontal ? Math.min(900, 60 + labels.length * 22) : 280}px"><canvas id="${b.bid}-c"></canvas></div>`;
   adChart(`${b.bid}-c`, { type, horizontal, labels, datasets: series });
+}
+
+// ═══════════════════════════════════════════════════════════
+// ACCOUNT LOCKOUTS
+// ═══════════════════════════════════════════════════════════
+let _loData = null;
+let _loHours = 24;
+
+async function lockoutLoad() {
+  const body = document.getElementById('lo-body');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div> Querying Elasticsearch…</div>';
+  document.getElementById('lo-total').textContent = '—';
+  document.getElementById('lo-accounts').textContent = '—';
+  document.getElementById('lo-failures').textContent = '—';
+  document.getElementById('lo-top-src').textContent = '—';
+  document.getElementById('lo-detail').innerHTML = '';
+  try {
+    const usr = document.getElementById('lo-user-filter').value.trim();
+    const qs = `hours=${_loHours}` + (usr ? `&username=${encodeURIComponent(usr)}` : '');
+    const r = await apiFetch(`/api/security/lockouts?${qs}`);
+    if (r.error) { body.innerHTML = `<div class="narrative-box">${adE(r.error)}</div>`; return; }
+    _loData = r;
+    document.getElementById('lo-total').textContent = r.total_lockout_events ?? '—';
+    document.getElementById('lo-accounts').textContent = r.unique_accounts_locked ?? '—';
+    document.getElementById('lo-failures').textContent = (r.failed_logons_total ?? '—').toLocaleString();
+    document.getElementById('lo-window').textContent = `last ${_loHours}h`;
+    const topSrc = (r.by_source_machine || [])[0];
+    document.getElementById('lo-top-src').textContent = topSrc ? `${topSrc.machine} (${topSrc.lockouts})` : '—';
+    const badge = document.getElementById('nav-lockout-badge');
+    if (r.total_lockout_events > 0) { badge.textContent = r.total_lockout_events; badge.style.display = ''; }
+    else badge.style.display = 'none';
+    lockoutRenderView();
+  } catch(e) {
+    body.innerHTML = `<div class="narrative-box">Error: ${adE(String(e))}</div>`;
+  }
+}
+
+function lockoutWin(h, el) {
+  _loHours = h;
+  document.querySelectorAll('#lo-window-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  lockoutLoad();
+}
+
+function lockoutFilterRender() {
+  if (_loData) lockoutLoad();
+}
+
+function lockoutRenderView() {
+  if (!_loData) return;
+  const view = document.getElementById('lo-view').value;
+  const body = document.getElementById('lo-body');
+  const r = _loData;
+
+  if (view === 'events') {
+    const rows = r.events || [];
+    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No lockout events (Event 4740) found in the selected window.</div>'; return; }
+    body.innerHTML = `
+      <div style="margin-bottom:8px;color:var(--text2);font-size:.82rem">Showing ${rows.length} of ${r.total_lockout_events} lockout events (most recent first)</div>
+      <div class="sp-table-wrap">${loTable(['timestamp','locked_account','domain','caller_machine','domain_controller'], rows)}</div>`;
+  } else if (view === 'by-account') {
+    const rows = r.by_account || [];
+    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No lockout data.</div>'; return; }
+    body.innerHTML = `<div class="sp-table-wrap">${loTable(['account','lockouts'], rows, 'lockouts')}</div>`;
+  } else if (view === 'by-source') {
+    const rows = r.by_source_machine || [];
+    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No source machine data.</div>'; return; }
+    body.innerHTML = `
+      <p style="color:var(--text2);font-size:.82rem;margin-bottom:8px">Source machine = the workstation or server whose credentials were tried, triggering the lockout.</p>
+      <div class="sp-table-wrap">${loTable(['machine','lockouts'], rows, 'lockouts')}</div>`;
+  } else if (view === 'by-dc') {
+    const rows = r.by_dc || [];
+    if (!rows.length) { body.innerHTML = '<div class="narrative-box">No domain controller data.</div>'; return; }
+    body.innerHTML = `<div class="sp-table-wrap">${loTable(['dc','lockouts'], rows, 'lockouts')}</div>`;
+  } else if (view === 'failures') {
+    const rows = r.failed_logons_by_account || [];
+    const srcRows = r.failed_logons_by_source || [];
+    if (!rows.length && !srcRows.length) { body.innerHTML = '<div class="narrative-box">No failed logon data (Event 4625).</div>'; return; }
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div>
+          <div class="card-title" style="margin-bottom:8px">Failed Logons by Account</div>
+          <div class="sp-table-wrap">${loTable(['account','failures'], rows, 'failures')}</div>
+        </div>
+        <div>
+          <div class="card-title" style="margin-bottom:8px">Failed Logons by Source Machine</div>
+          <div class="sp-table-wrap">${loTable(['machine','failures'], srcRows, 'failures')}</div>
+        </div>
+      </div>`;
+  } else if (view === 'timeline') {
+    const tl = r.failed_logon_timeline || [];
+    if (!tl.length) { body.innerHTML = '<div class="narrative-box">No timeline data available.</div>'; return; }
+    const canvasId = 'lo-timeline-chart';
+    body.innerHTML = `<div class="card" style="padding:16px"><div class="card-title">Failed Logons Timeline (last ${_loHours}h)</div><div style="height:260px"><canvas id="${canvasId}"></canvas></div></div>`;
+    const labels = tl.map(t => t.time);
+    const data = tl.map(t => t.failures);
+    adChart(canvasId, { type: 'line', labels, datasets: [{ label: 'Failed Logons', data, color: '#ef4444' }] });
+  }
+}
+
+function loTable(cols, rows, barCol) {
+  const maxBar = barCol ? Math.max(...rows.map(r => r[barCol] || 0), 1) : 0;
+  const hdr = cols.map(c => `<th>${adE(c.replace(/_/g,' '))}</th>`).join('');
+  const body = rows.map(row => {
+    const cells = cols.map(c => {
+      const v = row[c] ?? '';
+      if (c === barCol && typeof v === 'number') {
+        const pct = Math.round(v / maxBar * 100);
+        return `<td><div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;background:rgba(239,68,68,.12);border-radius:4px;height:8px">
+            <div style="width:${pct}%;background:var(--crit);height:8px;border-radius:4px"></div>
+          </div>
+          <span style="min-width:36px;text-align:right;font-weight:600">${v}</span>
+        </div></td>`;
+      }
+      if (c === 'timestamp') return `<td style="color:var(--text2);font-size:.78rem;white-space:nowrap">${adE(String(v).replace('T',' ').substring(0,19))}</td>`;
+      return `<td>${adE(String(v))}</td>`;
+    }).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  return `<table class="sp-tbl"><thead><tr>${hdr}</tr></thead><tbody>${body}</tbody></table>`;
 }
 </script>
 </body>
