@@ -3182,6 +3182,88 @@ document.querySelectorAll('.modal-overlay').forEach(el =>
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); })
 );
 
+// ── Custom dark select widget ──────────────────────────────────────
+function _initCustomSelect(sel) {
+  if (sel._cselDone) return;
+  sel._cselDone = true;
+
+  const origWidth  = sel.style.width  || null;
+  const origMinW   = sel.style.minWidth || null;
+  const origMaxW   = sel.style.maxWidth || null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'csel-wrap';
+  if (origWidth)  wrap.style.width    = origWidth;
+  if (origMinW)   wrap.style.minWidth = origMinW;
+  if (origMaxW)   wrap.style.maxWidth = origMaxW;
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+
+  const arrow = `<svg width="11" height="7" viewBox="0 0 11 7" fill="none"><path d="M1 1l4.5 4.5L10 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+  const btn  = document.createElement('div');
+  btn.className = 'csel-btn';
+  btn.innerHTML = `<span class="csel-val"></span>${arrow}`;
+  wrap.insertBefore(btn, sel);
+
+  const drop = document.createElement('div');
+  drop.className = 'csel-dropdown';
+  wrap.appendChild(drop);
+
+  function syncVal() {
+    const opt = sel.options[sel.selectedIndex];
+    btn.querySelector('.csel-val').textContent = opt ? opt.text : '';
+  }
+
+  function buildDrop() {
+    drop.innerHTML = '';
+    Array.from(sel.options).forEach(opt => {
+      const item = document.createElement('div');
+      item.className = 'csel-opt' + (opt.value === sel.value ? ' selected' : '');
+      item.textContent = opt.text;
+      item.dataset.val = opt.value;
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event('change', {bubbles: true}));
+        syncVal();
+        drop.classList.remove('open');
+      });
+      drop.appendChild(item);
+    });
+  }
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const wasOpen = drop.classList.contains('open');
+    document.querySelectorAll('.csel-dropdown.open').forEach(d => d.classList.remove('open'));
+    if (!wasOpen) { buildDrop(); drop.classList.add('open'); }
+  });
+
+  document.addEventListener('click', () => drop.classList.remove('open'));
+
+  // Keep in sync when JS changes sel.value externally
+  const mo = new MutationObserver(() => { syncVal(); });
+  mo.observe(sel, {childList: true, subtree: true, attributes: true, attributeFilter: ['value']});
+  sel.addEventListener('change', syncVal);
+
+  syncVal();
+}
+
+function initAllCustomSelects(root = document) {
+  root.querySelectorAll('select.form-select').forEach(_initCustomSelect);
+}
+
+// Init on load and watch for dynamically added selects
+initAllCustomSelects();
+const _cselObserver = new MutationObserver(muts => {
+  muts.forEach(m => m.addedNodes.forEach(n => {
+    if (n.nodeType !== 1) return;
+    if (n.matches?.('select.form-select')) _initCustomSelect(n);
+    n.querySelectorAll?.('select.form-select').forEach(_initCustomSelect);
+  }));
+});
+_cselObserver.observe(document.body, {childList: true, subtree: true});
+
 // ═══════════════════════════════════════════════════════════
 // AI PREDICTION
 // ═══════════════════════════════════════════════════════════
