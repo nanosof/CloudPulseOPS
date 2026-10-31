@@ -5986,7 +5986,8 @@ async function lockoutLoad() {
     document.getElementById('lo-accounts').textContent = r.unique_accounts_locked ?? '—';
     document.getElementById('lo-failures').textContent = (r.failed_logons_total ?? '—').toLocaleString();
     document.getElementById('lo-kerb').textContent = r.kerberos_failures ?? '—';
-    document.getElementById('lo-window').textContent = `last ${_loHours}h`;
+    const _wLabel = _loHours < 1 ? `last ${Math.round(_loHours*60)}m` : `last ${_loHours}h`;
+    document.getElementById('lo-window').textContent = _wLabel;
     const badge = document.getElementById('nav-lockout-badge');
     if (r.total_lockout_events > 0) { badge.textContent = r.total_lockout_events; badge.style.display = ''; }
     else badge.style.display = 'none';

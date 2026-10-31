@@ -852,10 +852,17 @@ def _burst_analysis(timestamps: list[str]) -> list[dict]:
     return [{"start": b[0], "end": b[-1], "count": len(b)} for b in bursts]
 
 
+def _to_es_window(hours: float) -> str:
+    """Convert float hours to valid ES datetime math (integers only)."""
+    if hours < 1:
+        return f"now-{max(1, int(round(hours * 60)))}m"
+    return f"now-{int(hours)}h"
+
+
 async def get_lockout_events(hours: float = 24, username: str = "") -> Dict:
     """Overview: recent lockout events + per-account / DC / source summaries."""
     hours = max(0.1, min(float(hours), 720))
-    window = f"now-{hours}h"
+    window = _to_es_window(hours)
 
     short_u = username.split("@")[0].strip() if username else ""
     base_filter: list = [{"range": {"@timestamp": {"gte": window}}}]
@@ -972,8 +979,8 @@ async def get_user_lockout_triage(username: str, hours: float = 24) -> Dict:
     Full triage for one user: ES lockout/failure/Kerberos events + Azure AD sign-in correlation.
     Mirrors the n8n Account Lockout Agent workflow logic.
     """
-    hours = max(1, min(int(hours), 168))
-    window = f"now-{hours}h"
+    hours = max(0.1, min(float(hours), 168))
+    window = _to_es_window(hours)
     short_user = username.split("@")[0] if "@" in username else username
 
     es_body = {
