@@ -55,7 +55,7 @@ class UpdateScheduleRequest(BaseModel):
 async def _ensure_tables():
     async with AsyncSessionLocal() as db:
         await db.execute(text("""
-            CREATE TABLE IF NOT EXISTS cloudpulse_scheduled_reports (
+            CREATE TABLE IF NOT EXISTS infraguardian_scheduled_reports (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 report_type TEXT NOT NULL,
@@ -75,9 +75,9 @@ async def _ensure_tables():
             )
         """))
         await db.execute(text("""
-            CREATE TABLE IF NOT EXISTS cloudpulse_report_history (
+            CREATE TABLE IF NOT EXISTS infraguardian_report_history (
                 id SERIAL PRIMARY KEY,
-                schedule_id INT REFERENCES cloudpulse_scheduled_reports(id),
+                schedule_id INT REFERENCES infraguardian_scheduled_reports(id),
                 schedule_name TEXT,
                 report_type TEXT,
                 status TEXT DEFAULT 'pending',
@@ -132,7 +132,7 @@ async def list_schedules(
 ):
     await _ensure_tables()
     async with AsyncSessionLocal() as db:
-        q = "SELECT * FROM cloudpulse_scheduled_reports"
+        q = "SELECT * FROM infraguardian_scheduled_reports"
         if enabled_only:
             q += " WHERE enabled = TRUE"
         q += " ORDER BY created_at DESC"
@@ -160,7 +160,7 @@ async def create_schedule(body: CreateScheduleRequest, user: dict = Depends(get_
                          body.day_of_week, body.day_of_month)
     async with AsyncSessionLocal() as db:
         result = await db.execute(text("""
-            INSERT INTO cloudpulse_scheduled_reports
+            INSERT INTO infraguardian_scheduled_reports
                 (name, report_type, frequency, day_of_week, day_of_month,
                  hour, minute, recipients, filters, enabled, created_by, next_run_at)
             VALUES
@@ -203,15 +203,15 @@ async def update_schedule(schedule_id: int, body: UpdateScheduleRequest,
         return {"ok": True, "message": "Nothing to update"}
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text(f"UPDATE cloudpulse_scheduled_reports SET {', '.join(sets)} WHERE id = :id"),
+            text(f"UPDATE infraguardian_scheduled_reports SET {', '.join(sets)} WHERE id = :id"),
             params,
         )
         # Timing may have changed — recompute the next run
         row = (await db.execute(text("""
-            SELECT frequency, hour, minute, day_of_week, day_of_month FROM cloudpulse_scheduled_reports WHERE id = :id
+            SELECT frequency, hour, minute, day_of_week, day_of_month FROM infraguardian_scheduled_reports WHERE id = :id
         """), {"id": schedule_id})).fetchone()
         if row:
-            await db.execute(text("UPDATE cloudpulse_scheduled_reports SET next_run_at = :n WHERE id = :id"),
+            await db.execute(text("UPDATE infraguardian_scheduled_reports SET next_run_at = :n WHERE id = :id"),
                              {"n": _next_run(*row), "id": schedule_id})
         await db.commit()
     return {"ok": True}
@@ -223,11 +223,11 @@ async def delete_schedule(schedule_id: int, user: dict = Depends(get_current_use
     async with AsyncSessionLocal() as db:
         # Keep past reports in history; just detach them from the deleted schedule
         await db.execute(
-            text("UPDATE cloudpulse_report_history SET schedule_id = NULL WHERE schedule_id = :id"),
+            text("UPDATE infraguardian_report_history SET schedule_id = NULL WHERE schedule_id = :id"),
             {"id": schedule_id},
         )
         await db.execute(
-            text("DELETE FROM cloudpulse_scheduled_reports WHERE id = :id"),
+            text("DELETE FROM infraguardian_scheduled_reports WHERE id = :id"),
             {"id": schedule_id},
         )
         await db.commit()
@@ -266,7 +266,7 @@ async def run_schedule_now(schedule_id: int, email: bool = Query(True), user: di
     await _ensure_tables()
     async with AsyncSessionLocal() as db:
         row = (await db.execute(text("""
-            SELECT id, name, report_type, filters, recipients FROM cloudpulse_scheduled_reports WHERE id = :id
+            SELECT id, name, report_type, filters, recipients FROM infraguardian_scheduled_reports WHERE id = :id
         """), {"id": schedule_id})).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Schedule not found")
@@ -302,7 +302,7 @@ async def report_history(
         rows = await db.execute(text(f"""
             SELECT id, schedule_id, schedule_name, report_type, status, generated_at, duration_seconds,
                    row_count, error_message, email_status, recipients
-            FROM cloudpulse_report_history
+            FROM infraguardian_report_history
             {where}
             ORDER BY generated_at DESC
             LIMIT :limit
@@ -322,7 +322,7 @@ async def get_report_data(report_id: int, _: dict = Depends(get_current_user)):
     await _ensure_tables()
     async with AsyncSessionLocal() as db:
         r = (await db.execute(
-            text("SELECT report_data, report_type, generated_at FROM cloudpulse_report_history WHERE id = :id"),
+            text("SELECT report_data, report_type, generated_at FROM infraguardian_report_history WHERE id = :id"),
             {"id": report_id},
         )).fetchone()
     if not r:
@@ -338,7 +338,7 @@ async def get_report_html(report_id: int, _: dict = Depends(get_current_user)):
     await _ensure_tables()
     async with AsyncSessionLocal() as db:
         r = (await db.execute(
-            text("SELECT report_data, report_type, status, error_message FROM cloudpulse_report_history WHERE id = :id"),
+            text("SELECT report_data, report_type, status, error_message FROM infraguardian_report_history WHERE id = :id"),
             {"id": report_id},
         )).fetchone()
     if not r:

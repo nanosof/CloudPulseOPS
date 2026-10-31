@@ -1,5 +1,5 @@
 """
-Reports router — reads from cloudpulse_capacity_daily and hourly tables.
+Reports router — reads from infraguardian_capacity_daily and hourly tables.
 All data is historical; no live ES calls here.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ async def fleet_trend(
                        ROUND(SUM(total_disk_gb)::numeric, 1) AS fleet_total_disk_gb,
                        ROUND(SUM(used_disk_gb)::numeric,  1) AS fleet_used_disk_gb,
                        COUNT(*) AS server_count
-                FROM cloudpulse_capacity_daily
+                FROM infraguardian_capacity_daily
                 WHERE report_date >= CURRENT_DATE - CAST(:days AS INTEGER)
                 GROUP BY report_date
                 ORDER BY report_date
@@ -66,7 +66,7 @@ async def server_report(
                        COALESCE(used_disk_gb,  0) AS used_disk_gb,
                        COALESCE(free_disk_gb,  0) AS free_disk_gb,
                        disk_details, os_name, host_ip
-                FROM cloudpulse_capacity_daily
+                FROM infraguardian_capacity_daily
                 WHERE server_name = :srv
                   AND report_date >= CURRENT_DATE - CAST(:days AS INTEGER)
                 ORDER BY report_date
@@ -129,7 +129,7 @@ async def top_consumers(
                        ROUND(AVG(COALESCE(used_mem_gb,  0))::numeric, 1) AS avg_used_mem_gb,
                        ROUND(AVG(COALESCE(used_disk_gb, 0))::numeric, 1) AS avg_used_disk_gb,
                        COUNT(*) AS days_seen
-                FROM cloudpulse_capacity_daily
+                FROM infraguardian_capacity_daily
                 WHERE report_date >= CURRENT_DATE - CAST(:days AS INTEGER)
                 GROUP BY server_name
                 ORDER BY AVG(COALESCE({metric}, 0)) DESC NULLS LAST
@@ -160,7 +160,7 @@ async def server_hourly(
                        COALESCE(disk_pct,0) AS disk_pct,
                        COALESCE(total_disk_gb,0) AS total_disk_gb,
                        COALESCE(used_disk_gb,0) AS used_disk_gb
-                FROM cloudpulse_capacity_hourly
+                FROM infraguardian_capacity_hourly
                 WHERE server_name = :srv
                   AND collected_at >= NOW() - make_interval(hours => CAST(:hours AS INTEGER))
                 ORDER BY collected_at
@@ -190,8 +190,8 @@ async def summary_stats(_: dict = Depends(get_current_user)):
                 COUNT(*) FILTER (WHERE avg_cpu_pct  >= 90) AS cpu_critical,
                 COUNT(*) FILTER (WHERE avg_mem_pct  >= 90) AS mem_critical,
                 COUNT(*) FILTER (WHERE avg_disk_pct >= 90) AS disk_critical
-            FROM cloudpulse_capacity_daily
-            WHERE report_date = (SELECT MAX(report_date) FROM cloudpulse_capacity_daily)
+            FROM infraguardian_capacity_daily
+            WHERE report_date = (SELECT MAX(report_date) FROM infraguardian_capacity_daily)
         """))
         r = row.fetchone()
         if r:

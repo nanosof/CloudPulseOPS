@@ -29,7 +29,7 @@ async def list_alerts(
             text(f"""
                 SELECT id, server_name, metric, value, severity, details,
                        acknowledged_at, acknowledged_by, jira_ticket_key, created_at
-                FROM cloudpulse_alerts
+                FROM infraguardian_alerts
                 {where}
                 ORDER BY created_at DESC
                 LIMIT :limit
@@ -46,7 +46,7 @@ async def acknowledge(body: AcknowledgeRequest, user: dict = Depends(get_current
     async with AsyncSessionLocal() as db:
         await db.execute(
             text("""
-                UPDATE cloudpulse_alerts
+                UPDATE infraguardian_alerts
                 SET acknowledged_at = NOW(), acknowledged_by = :u
                 WHERE id = :id
             """),
@@ -61,7 +61,7 @@ async def analyze_alert(alert_id: int, user: dict = Depends(get_current_user)):
     """Call the LLM to analyze the alert and return remediation advice."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            text("SELECT server_name, metric, value, details FROM cloudpulse_alerts WHERE id = :id"),
+            text("SELECT server_name, metric, value, details FROM infraguardian_alerts WHERE id = :id"),
             {"id": alert_id},
         )
         row = result.fetchone()
@@ -79,7 +79,7 @@ async def analyze_alert(alert_id: int, user: dict = Depends(get_current_user)):
     # Store LLM response in alert row
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text("UPDATE cloudpulse_alerts SET details = :d WHERE id = :id"),
+            text("UPDATE infraguardian_alerts SET details = :d WHERE id = :id"),
             {"d": str(details or {}) + f"\n\nAI Analysis: {analysis}", "id": alert_id},
         )
         await db.commit()
@@ -100,7 +100,7 @@ async def create_alert(
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             text("""
-                INSERT INTO cloudpulse_alerts (server_name, metric, value, severity, details)
+                INSERT INTO infraguardian_alerts (server_name, metric, value, severity, details)
                 VALUES (:server, :metric, :value, :severity, :details)
                 RETURNING id
             """),

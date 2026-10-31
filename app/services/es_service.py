@@ -448,7 +448,7 @@ async def get_fleet_summary(minutes: int = 60) -> Dict:
     try:
         async with AsyncSessionLocal() as db:
             row = (await db.execute(text(
-                "SELECT COUNT(*) FROM cloudpulse_server_inventory "
+                "SELECT COUNT(*) FROM infraguardian_server_inventory "
                 "WHERE monitored = TRUE AND os_name ILIKE 'Windows Server%'"
             ))).fetchone()
             db_total = int(row[0]) if row else 0
@@ -543,7 +543,7 @@ async def get_fleet_summary(minutes: int = 60) -> Dict:
 async def aggregate_daily_capacity(report_date: str | None = None) -> int:
     """
     Computes day-average CPU / memory / disk for every Windows Server
-    and upserts one row per server into cloudpulse_capacity_daily.
+    and upserts one row per server into infraguardian_capacity_daily.
     Returns the number of servers saved.
     """
     from sqlalchemy import text
@@ -706,7 +706,7 @@ async def aggregate_daily_capacity(report_date: str | None = None) -> int:
             free_disk_gb  = round(free_disk_bytes  / (1024**3), 2)
 
             await db.execute(text("""
-                INSERT INTO cloudpulse_capacity_daily
+                INSERT INTO infraguardian_capacity_daily
                     (server_name, report_date,
                      avg_cpu_pct, max_cpu_pct,
                      avg_mem_pct, max_mem_pct, total_mem_gb, used_mem_gb, free_mem_gb,
@@ -782,14 +782,14 @@ async def test_connection() -> dict:
 # ─────────────────────────────────────────────────────────────────
 # Hourly snapshot collection
 # Collects current metrics for ALL Windows Servers and stores them
-# in cloudpulse_capacity_hourly.  Runs every hour via APScheduler.
+# in infraguardian_capacity_hourly.  Runs every hour via APScheduler.
 # The daily aggregation reads this table instead of hitting ES.
 # ─────────────────────────────────────────────────────────────────
 
 async def collect_hourly_snapshot() -> int:
     """
     Collect a one-hour look-back snapshot for every Windows Server and
-    persist to cloudpulse_capacity_hourly.  Returns # rows inserted.
+    persist to infraguardian_capacity_hourly.  Returns # rows inserted.
     """
     from datetime import datetime, timezone
     from sqlalchemy import text
@@ -930,7 +930,7 @@ async def collect_hourly_snapshot() -> int:
             free_disk_gb  = round(free_disk  / (1024**3), 2)
 
             await db.execute(text("""
-                INSERT INTO cloudpulse_capacity_hourly
+                INSERT INTO infraguardian_capacity_hourly
                     (server_name, collected_at,
                      cpu_pct,
                      mem_pct, total_mem_gb, used_mem_gb, free_mem_gb,
@@ -953,7 +953,7 @@ async def collect_hourly_snapshot() -> int:
 
         # Prune rows older than 48 hours (keep table small)
         await db.execute(text("""
-            DELETE FROM cloudpulse_capacity_hourly
+            DELETE FROM infraguardian_capacity_hourly
             WHERE collected_at < NOW() - INTERVAL '48 hours'
         """))
         await db.commit()

@@ -3,9 +3,9 @@ AD / Entra ID health — collected from Microsoft Graph with the Entra app regis
 (Application permissions: Directory.Read.All, User.Read.All, AuditLog.Read.All,
 Reports.Read.All, Organization.Read.All) plus on-prem DC metrics from CloudPulse.
 
-Each section is collected independently into cloudpulse_ad_snapshots (one JSONB
+Each section is collected independently into infraguardian_ad_snapshots (one JSONB
 row per section) so a failing Graph call never blanks the others. Key numbers are
-also written daily to cloudpulse_ad_kpi_daily for trend lines. Findings and the
+also written daily to infraguardian_ad_kpi_daily for trend lines. Findings and the
 health score are derived on read from the snapshots + current ad.* settings.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ DUBAI = timezone(timedelta(hours=4))
 
 _SCHEMA = [
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_ad_snapshots (
+    CREATE TABLE IF NOT EXISTS infraguardian_ad_snapshots (
         section      VARCHAR(40) PRIMARY KEY,
         data         JSONB,
         ok           BOOLEAN,
@@ -48,7 +48,7 @@ _SCHEMA = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_ad_kpi_daily (
+    CREATE TABLE IF NOT EXISTS infraguardian_ad_kpi_daily (
         day    DATE        NOT NULL,
         kpi    VARCHAR(60) NOT NULL,
         value  NUMERIC,
@@ -56,7 +56,7 @@ _SCHEMA = [
     )
     """,
     """
-    INSERT INTO cloudpulse_settings (key, value, category, description, is_secret) VALUES
+    INSERT INTO infraguardian_settings (key, value, category, description, is_secret) VALUES
     ('ad.enabled',                'true', 'ad', 'Collect AD / Entra ID health from Microsoft Graph (true/false)', FALSE),
     ('ad.refresh_minutes',        '60',   'ad', 'Minutes between automatic collections (min 15)', FALSE),
     ('ad.stale_days',             '90',   'ad', 'Account / device is stale after this many days without sign-in', FALSE),
@@ -972,14 +972,14 @@ SECTIONS = [n for n, _ in COLLECTORS]
 async def _save(section: str, data: Optional[dict], ok: bool, error: Optional[str], ms: int) -> None:
     async with AsyncSessionLocal() as db:
         await db.execute(text("""
-            INSERT INTO cloudpulse_ad_snapshots (section, data, ok, error, duration_ms, collected_at, attempted_at)
+            INSERT INTO infraguardian_ad_snapshots (section, data, ok, error, duration_ms, collected_at, attempted_at)
             VALUES (:s, CAST(:d AS JSONB), :ok, :err, :ms, CASE WHEN :ok THEN NOW() END, NOW())
             ON CONFLICT (section) DO UPDATE SET
-                data         = COALESCE(EXCLUDED.data, cloudpulse_ad_snapshots.data),
+                data         = COALESCE(EXCLUDED.data, infraguardian_ad_snapshots.data),
                 ok           = EXCLUDED.ok,
                 error        = EXCLUDED.error,
                 duration_ms  = EXCLUDED.duration_ms,
-                collected_at = COALESCE(EXCLUDED.collected_at, cloudpulse_ad_snapshots.collected_at),
+                collected_at = COALESCE(EXCLUDED.collected_at, infraguardian_ad_snapshots.collected_at),
                 attempted_at = NOW()
         """), {"s": section, "d": json.dumps(data, default=str) if data is not None else None,
                "ok": ok, "err": error, "ms": ms})
@@ -1014,7 +1014,7 @@ async def load_snapshots(with_data: bool = True) -> dict[str, dict]:
         rows = (await db.execute(text(f"""
             SELECT section, {'data' if with_data else "data->'summary' AS data"}, ok, error, duration_ms,
                    collected_at, attempted_at
-            FROM cloudpulse_ad_snapshots
+            FROM infraguardian_ad_snapshots
         """))).fetchall()
     out = {}
     for r in rows:
@@ -1029,7 +1029,7 @@ async def load_snapshots(with_data: bool = True) -> dict[str, dict]:
 async def load_section(section: str) -> Optional[dict]:
     async with AsyncSessionLocal() as db:
         row = (await db.execute(text("""
-            SELECT data, ok, error, collected_at, attempted_at FROM cloudpulse_ad_snapshots WHERE section = :s
+            SELECT data, ok, error, collected_at, attempted_at FROM infraguardian_ad_snapshots WHERE section = :s
         """), {"s": section})).fetchone()
     if not row:
         return None
@@ -1069,7 +1069,7 @@ async def _record_kpis() -> None:
     async with AsyncSessionLocal() as db:
         for k, val in kpis.items():
             await db.execute(text("""
-                INSERT INTO cloudpulse_ad_kpi_daily (day, kpi, value) VALUES (:d, :k, :v)
+                INSERT INTO infraguardian_ad_kpi_daily (day, kpi, value) VALUES (:d, :k, :v)
                 ON CONFLICT (day, kpi) DO UPDATE SET value = EXCLUDED.value
             """), {"d": today, "k": k, "v": val})
         await db.commit()
@@ -1078,7 +1078,7 @@ async def _record_kpis() -> None:
 async def kpi_trends(days: int = 30) -> dict[str, list[dict]]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text("""
-            SELECT day, kpi, value FROM cloudpulse_ad_kpi_daily
+            SELECT day, kpi, value FROM infraguardian_ad_kpi_daily
             WHERE day >= CURRENT_DATE - CAST(:n AS INTEGER) ORDER BY day
         """), {"n": days})).fetchall()
     out: dict[str, list[dict]] = defaultdict(list)
@@ -1271,7 +1271,7 @@ async def is_running() -> bool:
 
 async def last_run() -> Optional[datetime]:
     async with AsyncSessionLocal() as db:
-        return (await db.execute(text("SELECT last_run FROM cloudpulse_teams_jobs WHERE job = 'ad_collect'"))).scalar()
+        return (await db.execute(text("SELECT last_run FROM infraguardian_teams_jobs WHERE job = 'ad_collect'"))).scalar()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

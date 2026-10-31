@@ -41,7 +41,7 @@ async def list_users(admin: dict = Depends(require_admin)):
         rows = await db.execute(text("""
             SELECT id, username, email, full_name, is_active, is_admin,
                    entra_id, created_at, last_login
-            FROM cloudpulse_users ORDER BY username
+            FROM infraguardian_users ORDER BY username
         """))
         cols = ["id", "username", "email", "full_name", "is_active", "is_admin",
                 "entra_id", "created_at", "last_login"]
@@ -60,7 +60,7 @@ async def create_user(body: CreateUser, admin: dict = Depends(require_admin)):
     async with AsyncSessionLocal() as db:
         try:
             await db.execute(text("""
-                INSERT INTO cloudpulse_users
+                INSERT INTO infraguardian_users
                     (username, email, full_name, hashed_pw, is_active, is_admin)
                 VALUES (:u, :e, :n, :h, TRUE, :a)
             """), {"u": body.username, "e": body.email, "n": body.full_name,
@@ -81,7 +81,7 @@ async def update_user(user_id: int, body: UpdateUser, admin: dict = Depends(requ
     if not sets:
         return {"ok": True}
     async with AsyncSessionLocal() as db:
-        await db.execute(text(f"UPDATE cloudpulse_users SET {', '.join(sets)} WHERE id = :id"), params)
+        await db.execute(text(f"UPDATE infraguardian_users SET {', '.join(sets)} WHERE id = :id"), params)
         await db.commit()
     return {"ok": True}
 
@@ -91,7 +91,7 @@ async def change_password(user_id: int, body: ChangePassword, admin: dict = Depe
     hashed = _pwd_hash(body.new_password)
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text("UPDATE cloudpulse_users SET hashed_pw = :h WHERE id = :id"),
+            text("UPDATE infraguardian_users SET hashed_pw = :h WHERE id = :id"),
             {"h": hashed, "id": user_id},
         )
         await db.commit()
@@ -103,7 +103,7 @@ async def deactivate_user(user_id: int, admin: dict = Depends(require_admin)):
     """Soft-delete: set is_active = false."""
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text("UPDATE cloudpulse_users SET is_active = FALSE WHERE id = :id"),
+            text("UPDATE infraguardian_users SET is_active = FALSE WHERE id = :id"),
             {"id": user_id},
         )
         await db.commit()

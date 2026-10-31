@@ -113,7 +113,7 @@ async def create_ticket(alert_id: int, body: TeamsTicketRequest, user: dict = De
         async with AsyncSessionLocal() as db:
             await db.execute(
                 text("""
-                    INSERT INTO cloudpulse_jira_tickets
+                    INSERT INTO infraguardian_jira_tickets
                         (ticket_key, ticket_url, project_key, summary, sr_type,
                          subsidiary_id, effort_hours, created_by, status, raw_input)
                     VALUES

@@ -45,7 +45,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 async def authenticate_user(username: str, password: str) -> Optional[dict]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            text("SELECT id, username, email, full_name, hashed_pw, is_active, is_admin FROM cloudpulse_users WHERE username = :u"),
+            text("SELECT id, username, email, full_name, hashed_pw, is_active, is_admin FROM infraguardian_users WHERE username = :u"),
             {"u": username}
         )
         row = result.fetchone()
@@ -58,7 +58,7 @@ async def authenticate_user(username: str, password: str) -> Optional[dict]:
             return None
         # Update last login
         await db.execute(
-            text("UPDATE cloudpulse_users SET last_login = NOW() WHERE id = :id"),
+            text("UPDATE infraguardian_users SET last_login = NOW() WHERE id = :id"),
             {"id": user["id"]}
         )
         await db.commit()
@@ -78,7 +78,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            text("SELECT id, username, email, full_name, is_active, is_admin FROM cloudpulse_users WHERE username = :u"),
+            text("SELECT id, username, email, full_name, is_active, is_admin FROM infraguardian_users WHERE username = :u"),
             {"u": username}
         )
         row = result.fetchone()
@@ -106,7 +106,7 @@ async def upsert_entra_user(entra_id: str, email: str, full_name: str) -> dict:
     async with AsyncSessionLocal() as db:
         # 1. Already linked via entra_id?
         result = await db.execute(
-            text("SELECT id, username, email, full_name, is_active, is_admin FROM cloudpulse_users WHERE entra_id = :eid"),
+            text("SELECT id, username, email, full_name, is_active, is_admin FROM infraguardian_users WHERE entra_id = :eid"),
             {"eid": entra_id}
         )
         row = result.fetchone()
@@ -115,7 +115,7 @@ async def upsert_entra_user(entra_id: str, email: str, full_name: str) -> dict:
             if not user["is_active"]:
                 raise HTTPException(status_code=403, detail="Account is inactive. Contact your administrator.")
             await db.execute(
-                text("UPDATE cloudpulse_users SET last_login = NOW(), full_name = :name WHERE entra_id = :eid"),
+                text("UPDATE infraguardian_users SET last_login = NOW(), full_name = :name WHERE entra_id = :eid"),
                 {"name": full_name, "eid": entra_id}
             )
             await db.commit()
@@ -123,7 +123,7 @@ async def upsert_entra_user(entra_id: str, email: str, full_name: str) -> dict:
 
         # 2. Email pre-registered by admin?
         result2 = await db.execute(
-            text("SELECT id, username, email, full_name, is_active, is_admin FROM cloudpulse_users WHERE LOWER(email) = LOWER(:email)"),
+            text("SELECT id, username, email, full_name, is_active, is_admin FROM infraguardian_users WHERE LOWER(email) = LOWER(:email)"),
             {"email": email}
         )
         row2 = result2.fetchone()
@@ -133,7 +133,7 @@ async def upsert_entra_user(entra_id: str, email: str, full_name: str) -> dict:
                 raise HTTPException(status_code=403, detail="Account is inactive. Contact your administrator.")
             # Link the Entra ID to the existing account
             await db.execute(
-                text("UPDATE cloudpulse_users SET entra_id = :eid, last_login = NOW(), full_name = :name WHERE id = :id"),
+                text("UPDATE infraguardian_users SET entra_id = :eid, last_login = NOW(), full_name = :name WHERE id = :id"),
                 {"eid": entra_id, "name": full_name, "id": user2["id"]}
             )
             await db.commit()

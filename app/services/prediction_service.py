@@ -109,7 +109,7 @@ async def get_fleet_forecast(forecast_days: int = 365, lookback_days: int = 90) 
                    ROUND(AVG(avg_mem_pct)::numeric,  1) AS avg_mem,
                    ROUND(AVG(avg_disk_pct)::numeric, 1) AS avg_disk,
                    COUNT(*) AS server_count
-            FROM cloudpulse_capacity_daily
+            FROM infraguardian_capacity_daily
             WHERE report_date >= CURRENT_DATE - CAST(:days AS INTEGER)
             GROUP BY report_date
             ORDER BY report_date
@@ -162,7 +162,7 @@ async def get_server_forecast(server_name: str, forecast_days: int = 365, lookba
         rows = await db.execute(text("""
             SELECT report_date, avg_cpu_pct, avg_mem_pct, avg_disk_pct,
                    total_disk_gb, used_disk_gb, total_mem_gb, used_mem_gb
-            FROM cloudpulse_capacity_daily
+            FROM infraguardian_capacity_daily
             WHERE server_name = :srv
               AND report_date >= CURRENT_DATE - CAST(:days AS INTEGER)
             ORDER BY report_date
@@ -219,7 +219,7 @@ async def get_capacity_risk_report(horizon_days: int = 180) -> dict:
         # Get distinct servers with enough history
         servers = await db.execute(text("""
             SELECT DISTINCT server_name
-            FROM cloudpulse_capacity_daily
+            FROM infraguardian_capacity_daily
             WHERE report_date >= CURRENT_DATE - 30
         """))
         server_names = [r[0] for r in servers.fetchall()]
@@ -273,13 +273,13 @@ async def get_capacity_risk_report(horizon_days: int = 180) -> dict:
 async def get_fleet_servers() -> list[str]:
     """
     Return all server names that have capacity data.
-    Primary source: cloudpulse_capacity_daily (DB).
+    Primary source: infraguardian_capacity_daily (DB).
     Fallback: live Elasticsearch aggregation when DB is empty.
     """
     async with AsyncSessionLocal() as db:
         rows = await db.execute(text("""
             SELECT DISTINCT server_name
-            FROM cloudpulse_capacity_daily
+            FROM infraguardian_capacity_daily
             WHERE report_date >= CURRENT_DATE - 90
             ORDER BY server_name
         """))

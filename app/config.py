@@ -1,6 +1,6 @@
 """
 Runtime configuration manager.
-All settings stored in PostgreSQL cloudpulse_settings table.
+All settings stored in PostgreSQL infraguardian_settings table.
 Provides in-memory cache with invalidation.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ async def _load_all():
     global _cache, _loaded
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            text("SELECT key, value FROM cloudpulse_settings")
+            text("SELECT key, value FROM infraguardian_settings")
         )
         rows = result.fetchall()
         _cache = {r[0]: r[1] or "" for r in rows}
@@ -60,7 +60,7 @@ async def set_value(key: str, value: str, updated_by: str = "system"):
     async with AsyncSessionLocal() as db:
         await db.execute(
             text("""
-                UPDATE cloudpulse_settings
+                UPDATE infraguardian_settings
                 SET value = :val, updated_at = NOW(), updated_by = :by
                 WHERE key = :key
             """),
@@ -75,7 +75,7 @@ async def get_all_by_category(category: str) -> list[dict]:
         result = await db.execute(
             text("""
                 SELECT key, value, description, is_secret
-                FROM cloudpulse_settings
+                FROM infraguardian_settings
                 WHERE category = :cat
                 ORDER BY key
             """),
@@ -99,7 +99,7 @@ async def get_all() -> list[dict]:
         result = await db.execute(
             text("""
                 SELECT key, value, category, description, is_secret
-                FROM cloudpulse_settings
+                FROM infraguardian_settings
                 ORDER BY category, key
             """)
         )

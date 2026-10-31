@@ -277,16 +277,16 @@ async def get_user_stats_from_db(ig_username: str) -> dict:
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         ytd  = (await db.execute(text(
-            "SELECT COUNT(*) FROM cloudpulse_jira_tickets WHERE created_at >= date_trunc('year', NOW()) AND created_by = :u"),
+            "SELECT COUNT(*) FROM infraguardian_jira_tickets WHERE created_at >= date_trunc('year', NOW()) AND created_by = :u"),
             {"u": ig_username})).scalar() or 0
         mtd  = (await db.execute(text(
-            "SELECT COUNT(*) FROM cloudpulse_jira_tickets WHERE created_at >= date_trunc('month', NOW()) AND created_by = :u"),
+            "SELECT COUNT(*) FROM infraguardian_jira_tickets WHERE created_at >= date_trunc('month', NOW()) AND created_by = :u"),
             {"u": ig_username})).scalar() or 0
         open_c = (await db.execute(text(
-            "SELECT COUNT(*) FROM cloudpulse_jira_tickets WHERE status NOT IN ('Resolved','Closed','Done') AND created_by = :u"),
+            "SELECT COUNT(*) FROM infraguardian_jira_tickets WHERE status NOT IN ('Resolved','Closed','Done') AND created_by = :u"),
             {"u": ig_username})).scalar() or 0
         inp  = (await db.execute(text(
-            "SELECT COUNT(*) FROM cloudpulse_jira_tickets WHERE status = 'In Progress' AND created_by = :u"),
+            "SELECT COUNT(*) FROM infraguardian_jira_tickets WHERE status = 'In Progress' AND created_by = :u"),
             {"u": ig_username})).scalar() or 0
     return {"ytd": ytd, "mtd": mtd, "open": open_c, "in_progress": inp, "source": "db"}
 
@@ -343,7 +343,7 @@ async def get_user_tickets(jira_username: str, filter: str = "mine", limit: int 
     """
     Fetch tickets assigned to jira_username directly from Jira.
     filter: all (last 90d) | ytd | mtd | mine (all time)
-    Returns list of dicts in the same shape as cloudpulse_jira_tickets DB rows.
+    Returns list of dicts in the same shape as infraguardian_jira_tickets DB rows.
     """
     _, base, headers = await _get_client()
     if not base:

@@ -88,7 +88,7 @@ async def list_servers(_: dict = Depends(get_current_user)):
         # Check if DB has any historical rows
         async with AsyncSessionLocal() as db:
             chk = await db.execute(text(
-                "SELECT COUNT(*) FROM cloudpulse_capacity_daily WHERE report_date >= CURRENT_DATE - 90"
+                "SELECT COUNT(*) FROM infraguardian_capacity_daily WHERE report_date >= CURRENT_DATE - 90"
             ))
             db_count = chk.scalar() or 0
 

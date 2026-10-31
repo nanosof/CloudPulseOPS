@@ -10,7 +10,7 @@ Authentication
 Every request must carry the header  X-CloudPulse-Key: <token>
 (X-InfraGuardian-Key is still accepted for older integrations.)
 The token is stored (plain-text for now, bcrypt-upgradeable later) in
-the cloudpulse_settings row with key = 'agent.api_key'.
+the infraguardian_settings row with key = 'agent.api_key'.
 An empty key in the DB means the feature is disabled entirely.
 
 Optional IP allowlist
@@ -62,7 +62,7 @@ router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
 
 async def _get_setting(db: AsyncSession, key: str, default: str = "") -> str:
     row = await db.execute(
-        text("SELECT value FROM cloudpulse_settings WHERE key = :k"),
+        text("SELECT value FROM infraguardian_settings WHERE key = :k"),
         {"k": key},
     )
     result = row.fetchone()
@@ -138,7 +138,7 @@ async def _last_capacity_snapshot(db: AsyncSession, server_name: str) -> dict[st
                    avg_mem_pct, total_mem_gb, used_mem_gb, free_mem_gb,
                    avg_disk_pct, total_disk_gb, used_disk_gb, free_disk_gb,
                    disk_details
-            FROM cloudpulse_capacity_daily
+            FROM infraguardian_capacity_daily
             WHERE server_name = :srv
             ORDER BY report_date DESC
             LIMIT 1
@@ -167,7 +167,7 @@ async def _last_capacity_snapshot(db: AsyncSession, server_name: str) -> dict[st
 async def _capacity_thresholds(db: AsyncSession) -> dict[str, float]:
     rows = await db.execute(
         text("""
-            SELECT key, value FROM cloudpulse_settings
+            SELECT key, value FROM infraguardian_settings
             WHERE key IN (
                 'capacity.cpu_warn', 'capacity.cpu_crit',
                 'capacity.mem_warn', 'capacity.disk_warn', 'capacity.disk_crit'

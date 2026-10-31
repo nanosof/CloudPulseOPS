@@ -102,7 +102,7 @@ async def create_ticket(body: CreateTicketRequest, user: dict = Depends(get_curr
         async with AsyncSessionLocal() as db:
             await db.execute(
                 text("""
-                    INSERT INTO cloudpulse_jira_tickets
+                    INSERT INTO infraguardian_jira_tickets
                         (ticket_key, ticket_url, project_key, summary, sr_type,
                          subsidiary_id, effort_hours, created_by, status)
                     VALUES
@@ -139,7 +139,7 @@ async def schedule_resolve(body: ScheduleResolveRequest, user: dict = Depends(ge
         if result.get("ok"):
             async with AsyncSessionLocal() as db:
                 await db.execute(
-                    text("UPDATE cloudpulse_jira_tickets SET status = 'Resolved', scheduled_resolve_at = NULL WHERE ticket_key = :k"),
+                    text("UPDATE infraguardian_jira_tickets SET status = 'Resolved', scheduled_resolve_at = NULL WHERE ticket_key = :k"),
                     {"k": ticket_key},
                 )
                 await db.commit()
@@ -155,7 +155,7 @@ async def schedule_resolve(body: ScheduleResolveRequest, user: dict = Depends(ge
         # Save scheduled time + resolution note to DB (for countdown and restart recovery)
         async with AsyncSessionLocal() as db:
             await db.execute(
-                text("""UPDATE cloudpulse_jira_tickets
+                text("""UPDATE infraguardian_jira_tickets
                         SET scheduled_resolve_at = :t,
                             resolution_note = :note
                         WHERE ticket_key = :k"""),
@@ -201,7 +201,7 @@ async def list_tickets(
                     SELECT ticket_key, ticket_url, project_key, summary, sr_type,
                            subsidiary_id, effort_hours, created_by, created_at, status,
                            scheduled_resolve_at
-                    FROM cloudpulse_jira_tickets
+                    FROM infraguardian_jira_tickets
                     WHERE 1=1 {db_filter}
                     ORDER BY created_at DESC
                     LIMIT :limit
@@ -282,7 +282,7 @@ async def seed_test_tickets(user: dict = Depends(get_current_user)):
                 ca = _dt.fromisoformat(ca)
             await db.execute(
                 text("""
-                    INSERT INTO cloudpulse_jira_tickets
+                    INSERT INTO infraguardian_jira_tickets
                         (ticket_key, ticket_url, project_key, summary, sr_type,
                          effort_hours, created_by, created_at, status)
                     VALUES
@@ -320,7 +320,7 @@ async def resolve_ticket(body: ResolveRequest, user: dict = Depends(get_current_
     if result.get("ok"):
         async with AsyncSessionLocal() as db:
             await db.execute(
-                text("UPDATE cloudpulse_jira_tickets SET status = 'Resolved' WHERE ticket_key = :k"),
+                text("UPDATE infraguardian_jira_tickets SET status = 'Resolved' WHERE ticket_key = :k"),
                 {"k": body.ticket_key},
             )
             await db.commit()

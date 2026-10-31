@@ -71,7 +71,7 @@ async def change_password(req: ChangePasswordRequest, current_user: dict = Depen
         raise HTTPException(status_code=400, detail="Current password incorrect")
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text("UPDATE cloudpulse_users SET hashed_pw = :pw WHERE username = :u"),
+            text("UPDATE infraguardian_users SET hashed_pw = :pw WHERE username = :u"),
             {"pw": hash_password(req.new_password), "u": current_user["username"]}
         )
         await db.commit()
@@ -82,7 +82,7 @@ async def change_password(req: ChangePasswordRequest, current_user: dict = Depen
 async def list_users(admin: dict = Depends(require_admin)):
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            text("SELECT id, username, email, full_name, is_active, is_admin, entra_id, created_at, last_login FROM cloudpulse_users ORDER BY created_at")
+            text("SELECT id, username, email, full_name, is_active, is_admin, entra_id, created_at, last_login FROM infraguardian_users ORDER BY created_at")
         )
         cols = ["id", "username", "email", "full_name", "is_active", "is_admin", "entra_id", "created_at", "last_login"]
         return [dict(zip(cols, r)) for r in result.fetchall()]
@@ -93,7 +93,7 @@ async def create_user(req: CreateUserRequest, admin: dict = Depends(require_admi
     async with AsyncSessionLocal() as db:
         try:
             await db.execute(
-                text("""INSERT INTO cloudpulse_users (username, email, full_name, hashed_pw, is_active, is_admin)
+                text("""INSERT INTO infraguardian_users (username, email, full_name, hashed_pw, is_active, is_admin)
                         VALUES (:u, :email, :name, :pw, TRUE, :admin)"""),
                 {"u": req.username, "email": req.email, "name": req.full_name,
                  "pw": hash_password(req.password), "admin": req.is_admin}
@@ -110,7 +110,7 @@ async def delete_user(username: str, admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Cannot delete admin user")
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text("UPDATE cloudpulse_users SET is_active = FALSE WHERE username = :u"), {"u": username}
+            text("UPDATE infraguardian_users SET is_active = FALSE WHERE username = :u"), {"u": username}
         )
         await db.commit()
     return {"ok": True}

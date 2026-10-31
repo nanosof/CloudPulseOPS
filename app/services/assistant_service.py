@@ -42,7 +42,7 @@ DATASET_ROW_CAP = 3000
 
 _SCHEMA = [
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_ai_chats (
+    CREATE TABLE IF NOT EXISTS infraguardian_ai_chats (
         id          SERIAL PRIMARY KEY,
         username    VARCHAR(100) NOT NULL,
         title       VARCHAR(200),
@@ -51,9 +51,9 @@ _SCHEMA = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_ai_messages (
+    CREATE TABLE IF NOT EXISTS infraguardian_ai_messages (
         id          SERIAL PRIMARY KEY,
-        chat_id     INTEGER NOT NULL REFERENCES cloudpulse_ai_chats(id) ON DELETE CASCADE,
+        chat_id     INTEGER NOT NULL REFERENCES infraguardian_ai_chats(id) ON DELETE CASCADE,
         role        VARCHAR(20) NOT NULL,
         content     TEXT,
         datasets    JSONB,
@@ -61,8 +61,8 @@ _SCHEMA = [
         created_at  TIMESTAMPTZ DEFAULT NOW()
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_ai_chats_user ON cloudpulse_ai_chats(username, updated_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_ai_messages_chat ON cloudpulse_ai_messages(chat_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_ai_chats_user ON infraguardian_ai_chats(username, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ai_messages_chat ON infraguardian_ai_messages(chat_id, id)",
 ]
 
 
@@ -126,7 +126,7 @@ async def _latest_capacity() -> dict[str, dict]:
         rows = (await db.execute(text("""
             SELECT DISTINCT ON (server_name) server_name, report_date, avg_cpu_pct, max_cpu_pct, avg_mem_pct,
                    avg_disk_pct, max_disk_pct, used_mem_gb, free_disk_gb
-            FROM cloudpulse_capacity_daily ORDER BY server_name, report_date DESC
+            FROM infraguardian_capacity_daily ORDER BY server_name, report_date DESC
         """))).fetchall()
     return {inv.key_of(r.server_name): {k: _plain(v) for k, v in r._mapping.items()} for r in rows}
 
@@ -278,7 +278,7 @@ async def t_capacity_history(ds: Datasets, server: str = "", project: str = "", 
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text("""
             SELECT server_name, report_date, avg_cpu_pct, max_cpu_pct, avg_mem_pct, max_disk_pct
-            FROM cloudpulse_capacity_daily WHERE report_date >= CURRENT_DATE - CAST(:d AS INTEGER) ORDER BY report_date
+            FROM infraguardian_capacity_daily WHERE report_date >= CURRENT_DATE - CAST(:d AS INTEGER) ORDER BY report_date
         """), {"d": days})).fetchall()
     look = await inv.project_lookup()
     if server:
@@ -732,19 +732,19 @@ async def run(history: list[dict], user_text: str) -> AsyncIterator[dict]:
 async def list_chats(username: str) -> list[dict]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text("""
-            SELECT id, title, created_at, updated_at FROM cloudpulse_ai_chats WHERE username = :u ORDER BY updated_at DESC LIMIT 200
+            SELECT id, title, created_at, updated_at FROM infraguardian_ai_chats WHERE username = :u ORDER BY updated_at DESC LIMIT 200
         """), {"u": username})).fetchall()
     return [dict(r._mapping) for r in rows]
 
 
 async def get_chat(chat_id: int, username: str) -> Optional[dict]:
     async with AsyncSessionLocal() as db:
-        chat = (await db.execute(text("SELECT id, title FROM cloudpulse_ai_chats WHERE id = :i AND username = :u"),
+        chat = (await db.execute(text("SELECT id, title FROM infraguardian_ai_chats WHERE id = :i AND username = :u"),
                                  {"i": chat_id, "u": username})).fetchone()
         if not chat:
             return None
         msgs = (await db.execute(text("""
-            SELECT id, role, content, datasets, steps, created_at FROM cloudpulse_ai_messages WHERE chat_id = :i ORDER BY id
+            SELECT id, role, content, datasets, steps, created_at FROM infraguardian_ai_messages WHERE chat_id = :i ORDER BY id
         """), {"i": chat_id})).fetchall()
     out = []
     for m in msgs:
@@ -758,7 +758,7 @@ async def get_chat(chat_id: int, username: str) -> Optional[dict]:
 
 async def create_chat(username: str, title: str) -> int:
     async with AsyncSessionLocal() as db:
-        cid = (await db.execute(text("INSERT INTO cloudpulse_ai_chats (username, title) VALUES (:u, :t) RETURNING id"),
+        cid = (await db.execute(text("INSERT INTO infraguardian_ai_chats (username, title) VALUES (:u, :t) RETURNING id"),
                                 {"u": username, "t": title[:200]})).scalar()
         await db.commit()
     return cid
@@ -767,17 +767,17 @@ async def create_chat(username: str, title: str) -> int:
 async def add_message(chat_id: int, role: str, content: str, datasets: Optional[list] = None, steps: Optional[list] = None) -> None:
     async with AsyncSessionLocal() as db:
         await db.execute(text("""
-            INSERT INTO cloudpulse_ai_messages (chat_id, role, content, datasets, steps)
+            INSERT INTO infraguardian_ai_messages (chat_id, role, content, datasets, steps)
             VALUES (:c, :r, :t, CAST(:d AS JSONB), CAST(:s AS JSONB))
         """), {"c": chat_id, "r": role, "t": content, "d": json.dumps(datasets or [], default=str), "s": json.dumps(steps or [], default=str)})
-        await db.execute(text("UPDATE cloudpulse_ai_chats SET updated_at = NOW() WHERE id = :c"), {"c": chat_id})
+        await db.execute(text("UPDATE infraguardian_ai_chats SET updated_at = NOW() WHERE id = :c"), {"c": chat_id})
         await db.commit()
 
 
 async def history_for_llm(chat_id: int) -> list[dict]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text("""
-            SELECT role, content FROM cloudpulse_ai_messages WHERE chat_id = :c ORDER BY id DESC LIMIT 12
+            SELECT role, content FROM infraguardian_ai_messages WHERE chat_id = :c ORDER BY id DESC LIMIT 12
         """), {"c": chat_id})).fetchall()
     # Previous answers reference datasets that no longer exist for the model; strip the markers
     return [{"role": r.role, "content": re.sub(r"\[\[(table|chart):[^\]]*\]\]", "(table shown to user)", r.content or "")}
@@ -786,7 +786,7 @@ async def history_for_llm(chat_id: int) -> list[dict]:
 
 async def delete_chat(chat_id: int, username: str) -> bool:
     async with AsyncSessionLocal() as db:
-        res = await db.execute(text("DELETE FROM cloudpulse_ai_chats WHERE id = :i AND username = :u RETURNING id"),
+        res = await db.execute(text("DELETE FROM infraguardian_ai_chats WHERE id = :i AND username = :u RETURNING id"),
                                {"i": chat_id, "u": username})
         ok = res.fetchone() is not None
         await db.commit()

@@ -47,7 +47,7 @@ async def _load(lookback_days: int) -> tuple[list[dict], dict[str, dict]]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text("""
             SELECT server_name, report_date, avg_cpu_pct, total_mem_gb, used_mem_gb, total_disk_gb, used_disk_gb
-            FROM cloudpulse_capacity_daily
+            FROM infraguardian_capacity_daily
             WHERE report_date >= CURRENT_DATE - CAST(:d AS INTEGER)
             ORDER BY report_date
         """), {"d": lookback_days})).fetchall()

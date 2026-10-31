@@ -16,7 +16,7 @@ when its latest occurrence clears:
 
 Metrics are fetched in-process via the Agent API payload builder. Scheduling is
 DB-driven: a 15s tick reloads settings and runs the poll / resolve-check when due
-(last-run times live in cloudpulse_teams_jobs). Each job is guarded by a
+(last-run times live in infraguardian_teams_jobs). Each job is guarded by a
 PostgreSQL advisory lock so only one uvicorn worker runs it at a time.
 """
 from __future__ import annotations
@@ -47,13 +47,13 @@ PARSE_VERSION    = 3   # bump to re-parse and re-group stored alerts on next sta
 
 _SCHEMA = [
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_teams_seen (
+    CREATE TABLE IF NOT EXISTS infraguardian_teams_seen (
         message_id  VARCHAR(255) PRIMARY KEY,
         seen_at     TIMESTAMPTZ DEFAULT NOW()
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_teams_alerts (
+    CREATE TABLE IF NOT EXISTS infraguardian_teams_alerts (
         id           SERIAL PRIMARY KEY,
         message_id   VARCHAR(255) UNIQUE NOT NULL,
         received_at  TIMESTAMPTZ,
@@ -71,16 +71,16 @@ _SCHEMA = [
         created_at   TIMESTAMPTZ DEFAULT NOW()
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_resolved ON cloudpulse_teams_alerts(resolved)",
-    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_received ON cloudpulse_teams_alerts(received_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_resolved ON infraguardian_teams_alerts(resolved)",
+    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_received ON infraguardian_teams_alerts(received_at DESC)",
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_teams_jobs (
+    CREATE TABLE IF NOT EXISTS infraguardian_teams_jobs (
         job       VARCHAR(50) PRIMARY KEY,
         last_run  TIMESTAMPTZ
     )
     """,
     """
-    INSERT INTO cloudpulse_settings (key, value, category, description, is_secret) VALUES
+    INSERT INTO infraguardian_settings (key, value, category, description, is_secret) VALUES
     ('teams.enabled',              'true', 'teams', 'Poll the Teams alert chat (true/false)', FALSE),
     ('teams.chat_id',              '', 'teams', 'Teams chat ID to read alerts from (uses Entra app credentials)', FALSE),
     ('teams.poll_interval',        '60',   'teams', 'Poll interval in seconds (min 15)', FALSE),
@@ -89,25 +89,25 @@ _SCHEMA = [
     ('teams.stale_clear_hours',    '0',    'teams', 'Auto-resolve non-metric incidents with no new occurrence for this many hours (0 = never)', FALSE)
     ON CONFLICT (key) DO NOTHING
     """,
-    "UPDATE cloudpulse_settings SET description = 'Poll interval in seconds (min 15)' WHERE key = 'teams.poll_interval'",
-    "UPDATE cloudpulse_settings SET description = 'Host CPU/memory/disk alert auto-resolves when every metric is below this %' WHERE key = 'teams.resolve_threshold'",
+    "UPDATE infraguardian_settings SET description = 'Poll interval in seconds (min 15)' WHERE key = 'teams.poll_interval'",
+    "UPDATE infraguardian_settings SET description = 'Host CPU/memory/disk alert auto-resolves when every metric is below this %' WHERE key = 'teams.resolve_threshold'",
     # Incident grouping: repeat alerts of the same type on the same target share an incident_id
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS incident_id INTEGER",
-    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_incident ON cloudpulse_teams_alerts(incident_id)",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS incident_id INTEGER",
+    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_incident ON infraguardian_teams_alerts(incident_id)",
     # Parsed alert fields
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS title         TEXT",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS project       VARCHAR(255)",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS entity        TEXT",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS hosts         JSONB",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS event_refs    JSONB",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS alert_ref     VARCHAR(50)",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS group_key     VARCHAR(500)",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS metric_check  BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS ig_host       VARCHAR(255)",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS resolved_by   VARCHAR(30)",
-    "ALTER TABLE cloudpulse_teams_alerts ADD COLUMN IF NOT EXISTS parse_version SMALLINT",
-    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_group ON cloudpulse_teams_alerts(group_key, metric_type)",
-    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_events ON cloudpulse_teams_alerts USING GIN (event_refs)",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS title         TEXT",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS project       VARCHAR(255)",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS entity        TEXT",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS hosts         JSONB",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS event_refs    JSONB",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS alert_ref     VARCHAR(50)",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS group_key     VARCHAR(500)",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS metric_check  BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS ig_host       VARCHAR(255)",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS resolved_by   VARCHAR(30)",
+    "ALTER TABLE infraguardian_teams_alerts ADD COLUMN IF NOT EXISTS parse_version SMALLINT",
+    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_group ON infraguardian_teams_alerts(group_key, metric_type)",
+    "CREATE INDEX IF NOT EXISTS idx_teams_alerts_events ON infraguardian_teams_alerts USING GIN (event_refs)",
 ]
 
 
@@ -141,7 +141,7 @@ async def _load_ig_hosts(db=None) -> dict[str, str]:
     if _ig_hosts and time.time() - _ig_hosts_at < 600:
         return _ig_hosts
     sql = text("""
-        SELECT DISTINCT server_name FROM cloudpulse_capacity_daily
+        SELECT DISTINCT server_name FROM infraguardian_capacity_daily
         WHERE report_date >= CURRENT_DATE - 14
     """)
     if db is None:
@@ -209,7 +209,7 @@ async def describe(raw_text: str, db=None, use_llm: bool = True) -> dict:
 async def _backfill_parse(db) -> int:
     """(Re)parse stored alerts written by an older parser version. Returns rows updated."""
     rows = (await db.execute(text("""
-        SELECT id, raw_text, server_name, metric_type, severity FROM cloudpulse_teams_alerts
+        SELECT id, raw_text, server_name, metric_type, severity FROM infraguardian_teams_alerts
         WHERE parse_version IS DISTINCT FROM :v
     """), {"v": PARSE_VERSION})).fetchall()
     for r in rows:
@@ -228,7 +228,7 @@ async def _backfill_parse(db) -> int:
             f["metric_check"] = bool(f["ig_host"])
             f["severity"] = r.severity or f["severity"]
         await db.execute(text("""
-            UPDATE cloudpulse_teams_alerts SET
+            UPDATE infraguardian_teams_alerts SET
                 server_name = :server_name, metric_type = :metric_type, title = :title,
                 project = :project, entity = :entity, hosts = CAST(:hosts AS JSONB),
                 event_refs = CAST(:event_refs AS JSONB), alert_ref = :alert_ref, group_key = :group_key,
@@ -248,10 +248,10 @@ async def _backfill_incidents(db, regroup_all: bool = False) -> None:
     if that incident had not yet cleared when the alert arrived; else it starts a new one.
     """
     if regroup_all:
-        await db.execute(text("UPDATE cloudpulse_teams_alerts SET incident_id = NULL"))
+        await db.execute(text("UPDATE infraguardian_teams_alerts SET incident_id = NULL"))
     rows = (await db.execute(text("""
         SELECT id, group_key, metric_type, received_at, resolved, resolved_at
-        FROM cloudpulse_teams_alerts
+        FROM infraguardian_teams_alerts
         WHERE incident_id IS NULL
         ORDER BY received_at NULLS FIRST, id
     """))).fetchall()
@@ -268,7 +268,7 @@ async def _backfill_incidents(db, regroup_all: bool = False) -> None:
         if r.group_key:
             open_incidents[key] = (incident_id, r.resolved_at if r.resolved else None)
         await db.execute(
-            text("UPDATE cloudpulse_teams_alerts SET incident_id = :inc WHERE id = :id"),
+            text("UPDATE infraguardian_teams_alerts SET incident_id = :inc WHERE id = :id"),
             {"inc": incident_id, "id": r.id},
         )
 
@@ -276,10 +276,10 @@ async def _backfill_incidents(db, regroup_all: bool = False) -> None:
     await db.execute(text("""
         WITH latest AS (
             SELECT DISTINCT ON (incident_id) incident_id, resolved, resolved_at
-            FROM cloudpulse_teams_alerts
+            FROM infraguardian_teams_alerts
             ORDER BY incident_id, received_at DESC NULLS LAST, id DESC
         )
-        UPDATE cloudpulse_teams_alerts a
+        UPDATE infraguardian_teams_alerts a
         SET resolved = TRUE, resolved_at = COALESCE(a.resolved_at, l.resolved_at)
         FROM latest l
         WHERE a.incident_id = l.incident_id AND l.resolved AND NOT a.resolved
@@ -336,7 +336,7 @@ async def list_incidents(resolved: bool, limit: int = 500) -> list[dict]:
             text(f"""
                 SELECT * FROM (
                     SELECT DISTINCT ON (incident_id) {_COLS}
-                    FROM cloudpulse_teams_alerts
+                    FROM infraguardian_teams_alerts
                     ORDER BY incident_id, received_at DESC NULLS LAST, id DESC
                 ) l
                 WHERE resolved = :r
@@ -352,7 +352,7 @@ async def list_incidents(resolved: bool, limit: int = 500) -> list[dict]:
         members = (await db.execute(
             text("""
                 SELECT id, incident_id, received_at, severity, sender, raw_text, title, jira_key, jira_url
-                FROM cloudpulse_teams_alerts
+                FROM infraguardian_teams_alerts
                 WHERE incident_id = ANY(:ids)
                 ORDER BY received_at DESC NULLS LAST, id DESC
             """),
@@ -378,7 +378,7 @@ async def list_incidents(resolved: bool, limit: int = 500) -> list[dict]:
 async def get_alert(alert_id: int) -> Optional[dict]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            text(f"SELECT {_COLS} FROM cloudpulse_teams_alerts WHERE id = :id"), {"id": alert_id}
+            text(f"SELECT {_COLS} FROM infraguardian_teams_alerts WHERE id = :id"), {"id": alert_id}
         )
         row = result.fetchone()
         return _row_to_dict(row) if row else None
@@ -390,7 +390,7 @@ async def save_alert(message_id: str, received_at: str, raw_text: str, sender: s
     async with AsyncSessionLocal() as db:
         new_id = (await db.execute(
             text("""
-                INSERT INTO cloudpulse_teams_alerts
+                INSERT INTO infraguardian_teams_alerts
                     (message_id, received_at, raw_text, sender, server_name, metric_type,
                      ig_data, analysis, severity, title, project, entity, hosts, event_refs,
                      alert_ref, group_key, metric_check, ig_host, parse_version)
@@ -412,9 +412,9 @@ async def save_alert(message_id: str, received_at: str, raw_text: str, sender: s
         # Join the open incident for the same category + target, else start a new one
         incident_id = (await db.execute(
             text("""
-                UPDATE cloudpulse_teams_alerts SET incident_id = COALESCE(
+                UPDATE infraguardian_teams_alerts SET incident_id = COALESCE(
                     incident_id,
-                    (SELECT incident_id FROM cloudpulse_teams_alerts
+                    (SELECT incident_id FROM infraguardian_teams_alerts
                      WHERE id <> :id AND resolved = FALSE AND incident_id IS NOT NULL
                        AND CAST(:gk AS VARCHAR) IS NOT NULL AND group_key = :gk
                        AND metric_type = :metric
@@ -433,7 +433,7 @@ async def update_analysis(alert_id: int, ig_data: dict, analysis: str, severity:
     async with AsyncSessionLocal() as db:
         await db.execute(
             text("""
-                UPDATE cloudpulse_teams_alerts
+                UPDATE infraguardian_teams_alerts
                 SET ig_data = CAST(:ig AS JSONB), analysis = :analysis, severity = :sev
                 WHERE id = :id
             """),
@@ -442,14 +442,14 @@ async def update_analysis(alert_id: int, ig_data: dict, analysis: str, severity:
         await db.commit()
 
 
-_SAME_INCIDENT = "incident_id = (SELECT incident_id FROM cloudpulse_teams_alerts WHERE id = :id)"
+_SAME_INCIDENT = "incident_id = (SELECT incident_id FROM infraguardian_teams_alerts WHERE id = :id)"
 
 
 async def set_jira(alert_id: int, jira_key: str, jira_url: str) -> None:
     """Link a ticket to every occurrence in the alert's incident."""
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text(f"UPDATE cloudpulse_teams_alerts SET jira_key = :k, jira_url = :u WHERE {_SAME_INCIDENT}"),
+            text(f"UPDATE infraguardian_teams_alerts SET jira_key = :k, jira_url = :u WHERE {_SAME_INCIDENT}"),
             {"k": jira_key, "u": jira_url, "id": alert_id},
         )
         await db.commit()
@@ -460,7 +460,7 @@ async def mark_resolved(alert_id: int, resolved: bool, by: str = "manual") -> No
     async with AsyncSessionLocal() as db:
         await db.execute(
             text(f"""
-                UPDATE cloudpulse_teams_alerts
+                UPDATE infraguardian_teams_alerts
                 SET resolved = :r,
                     resolved_at = CASE WHEN :r THEN NOW() ELSE NULL END,
                     resolved_by = CASE WHEN :r THEN :by ELSE NULL END
@@ -478,12 +478,12 @@ async def _resolve_by_events(event_ids: list[str], keep_incident: Optional[int])
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             text("""
-                UPDATE cloudpulse_teams_alerts
+                UPDATE infraguardian_teams_alerts
                 SET resolved = TRUE, resolved_at = NOW(), resolved_by = 'dynatrace'
                 WHERE resolved = FALSE
                   AND incident_id <> COALESCE(CAST(:keep AS INTEGER), -1)
                   AND incident_id IN (
-                      SELECT incident_id FROM cloudpulse_teams_alerts
+                      SELECT incident_id FROM infraguardian_teams_alerts
                       WHERE event_refs @> ANY(CAST(:needles AS JSONB[])))
                 RETURNING incident_id
             """),
@@ -503,7 +503,7 @@ async def _unseen_ids(message_ids: list[str]) -> set[str]:
         return set()
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            text("SELECT message_id FROM cloudpulse_teams_seen WHERE message_id = ANY(:ids)"),
+            text("SELECT message_id FROM infraguardian_teams_seen WHERE message_id = ANY(:ids)"),
             {"ids": message_ids},
         )
         seen = {r[0] for r in result.fetchall()}
@@ -515,7 +515,7 @@ async def _mark_seen(message_id: str) -> bool:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             text("""
-                INSERT INTO cloudpulse_teams_seen (message_id) VALUES (:mid)
+                INSERT INTO infraguardian_teams_seen (message_id) VALUES (:mid)
                 ON CONFLICT (message_id) DO NOTHING
                 RETURNING message_id
             """),
@@ -832,7 +832,7 @@ async def reanalyze(alert: dict) -> dict:
 
 async def _run_locked(lock_id: int, job: str, coro_fn, every_seconds: Optional[int] = None) -> Optional[int]:
     """
-    Run coro_fn under a PostgreSQL advisory lock and record the run in cloudpulse_teams_jobs.
+    Run coro_fn under a PostgreSQL advisory lock and record the run in infraguardian_teams_jobs.
     With every_seconds, only run if the last recorded run is at least that old.
     Returns None if another worker holds the lock or the job is not yet due.
     """
@@ -848,7 +848,7 @@ async def _run_locked(lock_id: int, job: str, coro_fn, every_seconds: Optional[i
                 due = (await lock_db.execute(
                     text("""
                         SELECT COALESCE(MAX(last_run), 'epoch') <= NOW() - make_interval(secs => :s)
-                        FROM cloudpulse_teams_jobs WHERE job = :j
+                        FROM infraguardian_teams_jobs WHERE job = :j
                     """),
                     {"j": job, "s": every_seconds},
                 )).scalar()
@@ -856,7 +856,7 @@ async def _run_locked(lock_id: int, job: str, coro_fn, every_seconds: Optional[i
                     return None
             await lock_db.execute(
                 text("""
-                    INSERT INTO cloudpulse_teams_jobs (job, last_run) VALUES (:j, NOW())
+                    INSERT INTO infraguardian_teams_jobs (job, last_run) VALUES (:j, NOW())
                     ON CONFLICT (job) DO UPDATE SET last_run = NOW()
                 """),
                 {"j": job},
@@ -899,7 +899,7 @@ async def _resolve_check() -> int:
             SELECT id, server_name, metric_type, ig_host, metric_check, received_at FROM (
                 SELECT DISTINCT ON (incident_id) id, server_name, metric_type, ig_host,
                        metric_check, received_at, resolved
-                FROM cloudpulse_teams_alerts
+                FROM infraguardian_teams_alerts
                 ORDER BY incident_id, received_at DESC NULLS LAST, id DESC
             ) l
             WHERE resolved = FALSE

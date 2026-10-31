@@ -80,7 +80,7 @@ async def _check_capacity_thresholds():
                     # Only create if no unacknowledged alert for this server+metric in last hour
                     existing = await db.execute(
                         text("""
-                            SELECT id FROM cloudpulse_alerts
+                            SELECT id FROM infraguardian_alerts
                             WHERE server_name = :srv AND metric = :m
                               AND acknowledged_at IS NULL
                               AND created_at > NOW() - INTERVAL '1 hour'
@@ -90,7 +90,7 @@ async def _check_capacity_thresholds():
                     if not existing.fetchone():
                         await db.execute(
                             text("""
-                                INSERT INTO cloudpulse_alerts
+                                INSERT INTO infraguardian_alerts
                                     (server_name, metric, value, severity)
                                 VALUES (:srv, :m, :v, :sev)
                             """),
@@ -177,7 +177,7 @@ async def lifespan(app: FastAPI):
         from app.services import inventory_service as _inv
         await _inv.ensure_schema()
         async with AsyncSessionLocal() as db:
-            empty = not (await db.execute(text("SELECT 1 FROM cloudpulse_server_inventory LIMIT 1"))).fetchone()
+            empty = not (await db.execute(text("SELECT 1 FROM infraguardian_server_inventory LIMIT 1"))).fetchone()
         if empty:
             await _inv.refresh()
     except Exception as e:
@@ -208,7 +208,7 @@ async def lifespan(app: FastAPI):
     try:
         from sqlalchemy import text
         async with AsyncSessionLocal() as db:
-            result = await db.execute(text("SELECT COUNT(*) FROM cloudpulse_capacity_daily"))
+            result = await db.execute(text("SELECT COUNT(*) FROM infraguardian_capacity_daily"))
             row_count = result.scalar() or 0
         if row_count == 0:
             log.info("capacity_daily is empty — running initial seed for yesterday…")
@@ -225,11 +225,11 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import text
         async with AsyncSessionLocal() as db:
             await db.execute(text("""
-                ALTER TABLE cloudpulse_jira_tickets
+                ALTER TABLE infraguardian_jira_tickets
                 ADD COLUMN IF NOT EXISTS resolution_note TEXT
             """))
             await db.execute(text("""
-                ALTER TABLE cloudpulse_jira_tickets
+                ALTER TABLE infraguardian_jira_tickets
                 ADD COLUMN IF NOT EXISTS scheduled_resolve_at TIMESTAMPTZ
             """))
             await db.commit()
@@ -248,7 +248,7 @@ async def lifespan(app: FastAPI):
         async with AsyncSessionLocal() as db:
             pending = await db.execute(text("""
                 SELECT ticket_key, resolution_note, scheduled_resolve_at
-                FROM cloudpulse_jira_tickets
+                FROM infraguardian_jira_tickets
                 WHERE scheduled_resolve_at > NOW()
                   AND status NOT IN ('Resolved', 'Closed')
             """))
@@ -263,7 +263,7 @@ async def lifespan(app: FastAPI):
                 if result.get("ok"):
                     async with AsyncSessionLocal() as db2:
                         await db2.execute(
-                            text("UPDATE cloudpulse_jira_tickets SET status='Resolved', scheduled_resolve_at=NULL WHERE ticket_key=:k"),
+                            text("UPDATE infraguardian_jira_tickets SET status='Resolved', scheduled_resolve_at=NULL WHERE ticket_key=:k"),
                             {"k": key},
                         )
                         await db2.commit()

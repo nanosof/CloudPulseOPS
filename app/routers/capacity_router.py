@@ -75,7 +75,7 @@ async def server_history(
                 text("""
                     SELECT report_date, avg_cpu_pct, avg_mem_pct, avg_disk_pct,
                            disk_details, host_ip, os_name
-                    FROM cloudpulse_capacity_daily
+                    FROM infraguardian_capacity_daily
                     WHERE server_name = :name
                       AND report_date >= CURRENT_DATE - CAST(:days AS INTEGER)
                     ORDER BY report_date DESC
@@ -109,7 +109,7 @@ async def capacity_summary(
                            ROUND(AVG(avg_mem_pct)::numeric, 1)  AS avg_memory,
                            ROUND(AVG(avg_disk_pct)::numeric, 1) AS avg_disk,
                            COUNT(*)                               AS server_count
-                    FROM cloudpulse_capacity_daily
+                    FROM infraguardian_capacity_daily
                     WHERE report_date >= CURRENT_DATE - CAST(:days AS INTEGER)
                     GROUP BY report_date
                     ORDER BY report_date

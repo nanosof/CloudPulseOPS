@@ -9,7 +9,7 @@ Security collectors (Microsoft Graph, read-only Application permissions):
   sec_devices   Defender device inventory, vulnerabilities, missing updates, antivirus,
                 secure configuration, end-of-support software  ThreatHunting.Read.All (advanced hunting)
 
-Snapshots share cloudpulse_ad_snapshots with the identity collectors (same collection run,
+Snapshots share infraguardian_ad_snapshots with the identity collectors (same collection run,
 lock and schedule). Security findings and the security score are derived on read.
 """
 from __future__ import annotations
@@ -575,7 +575,7 @@ async def ensure_settings() -> None:
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         await db.execute(text("""
-            INSERT INTO cloudpulse_settings (key, value, category, description, is_secret) VALUES
+            INSERT INTO infraguardian_settings (key, value, category, description, is_secret) VALUES
             ('sec.secure_score_target_pct', '60', 'sec', 'Warn when Microsoft Secure Score is below this % of maximum', FALSE),
             ('sec.patch_months_warn',       '2',  'sec', 'Warn when a Windows server is missing updates this many months old', FALSE)
             ON CONFLICT (key) DO NOTHING

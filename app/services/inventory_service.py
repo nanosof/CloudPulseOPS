@@ -28,7 +28,7 @@ CRITICALITY = ["Critical", "High", "Medium", "Low"]
 
 _SCHEMA = [
     """
-    CREATE TABLE IF NOT EXISTS cloudpulse_server_inventory (
+    CREATE TABLE IF NOT EXISTS infraguardian_server_inventory (
         server_key    VARCHAR(255) PRIMARY KEY,   -- lower-case short hostname
         server_name   VARCHAR(255) NOT NULL,      -- as CloudPulse / Elastic know it
         ip_address    VARCHAR(100),
@@ -51,9 +51,9 @@ _SCHEMA = [
         created_at    TIMESTAMPTZ DEFAULT NOW()
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_inventory_project ON cloudpulse_server_inventory(project)",
+    "CREATE INDEX IF NOT EXISTS idx_inventory_project ON infraguardian_server_inventory(project)",
     """
-    INSERT INTO cloudpulse_settings (key, value, category, description, is_secret) VALUES
+    INSERT INTO infraguardian_settings (key, value, category, description, is_secret) VALUES
     ('inventory.project_map', 'pay=Payments,crm=CRM,web=Web Portal',
      'inventory', 'Elastic namespace project code = project name (comma-separated) — used to suggest projects', FALSE),
     ('inventory.env_map', 'prod=Production,nprod=Non-Production,dr=DR,preprd=Pre-Production,uat=UAT,dev=Development,test=Test,stg=Staging',
@@ -122,7 +122,7 @@ async def refresh() -> int:
     async with AsyncSessionLocal() as db:
         cap = {key_of(x.server_name): x for x in (await db.execute(text("""
             SELECT DISTINCT ON (server_name) server_name, total_mem_gb, total_disk_gb, host_ip
-            FROM cloudpulse_capacity_daily ORDER BY server_name, report_date DESC
+            FROM infraguardian_capacity_daily ORDER BY server_name, report_date DESC
         """))).fetchall()}
         seen = set()
         for b in buckets:
@@ -136,14 +136,14 @@ async def refresh() -> int:
             c = cap.get(k)
             seen.add(k)
             await db.execute(text("""
-                INSERT INTO cloudpulse_server_inventory
+                INSERT INTO infraguardian_server_inventory
                     (server_key, server_name, ip_address, os_name, vcpu, memory_gb, disk_gb, es_namespace, site, monitored, last_seen)
                 VALUES (:k, :n, :ip, :os, :cores, :mem, :disk, :ns, :site, TRUE, :seen)
                 ON CONFLICT (server_key) DO UPDATE SET
-                    server_name = EXCLUDED.server_name, ip_address = COALESCE(EXCLUDED.ip_address, cloudpulse_server_inventory.ip_address),
-                    os_name = EXCLUDED.os_name, vcpu = COALESCE(EXCLUDED.vcpu, cloudpulse_server_inventory.vcpu),
-                    memory_gb = COALESCE(EXCLUDED.memory_gb, cloudpulse_server_inventory.memory_gb),
-                    disk_gb = COALESCE(EXCLUDED.disk_gb, cloudpulse_server_inventory.disk_gb),
+                    server_name = EXCLUDED.server_name, ip_address = COALESCE(EXCLUDED.ip_address, infraguardian_server_inventory.ip_address),
+                    os_name = EXCLUDED.os_name, vcpu = COALESCE(EXCLUDED.vcpu, infraguardian_server_inventory.vcpu),
+                    memory_gb = COALESCE(EXCLUDED.memory_gb, infraguardian_server_inventory.memory_gb),
+                    disk_gb = COALESCE(EXCLUDED.disk_gb, infraguardian_server_inventory.disk_gb),
                     es_namespace = EXCLUDED.es_namespace, site = EXCLUDED.site, monitored = TRUE, last_seen = EXCLUDED.last_seen
             """), {
                 "k": k, "n": c.server_name if c else name, "ip": ip or (c.host_ip if c else None), "os": (host.get("os") or {}).get("name"),
@@ -155,7 +155,7 @@ async def refresh() -> int:
                 "seen": datetime.now(timezone.utc),
             })
         if seen:
-            await db.execute(text("UPDATE cloudpulse_server_inventory SET monitored = FALSE WHERE server_key <> ALL(:keys)"),
+            await db.execute(text("UPDATE infraguardian_server_inventory SET monitored = FALSE WHERE server_key <> ALL(:keys)"),
                              {"keys": list(seen)})
         await db.commit()
     log.info("Server inventory refreshed: %d servers seen in Elastic", len(seen))
@@ -174,7 +174,7 @@ async def list_servers() -> list[dict]:
     """All servers with effective project / environment (admin value, else namespace suggestion)."""
     pmap, emap = await _maps()
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(text(f"SELECT {_COLS} FROM cloudpulse_server_inventory ORDER BY server_name"))).fetchall()
+        rows = (await db.execute(text(f"SELECT {_COLS} FROM infraguardian_server_inventory ORDER BY server_name"))).fetchall()
     out = []
     for r in rows:
         d = {k: (float(v) if hasattr(v, "is_finite") else v) for k, v in r._mapping.items()}
@@ -227,7 +227,7 @@ async def update_server(server_key: str, fields: dict, user: str) -> bool:
         return False
     async with AsyncSessionLocal() as db:
         res = await db.execute(text(
-            f"UPDATE cloudpulse_server_inventory SET {', '.join(f'{k} = :{k}' for k in sets)}, updated_by = :by, updated_at = NOW() "
+            f"UPDATE infraguardian_server_inventory SET {', '.join(f'{k} = :{k}' for k in sets)}, updated_by = :by, updated_at = NOW() "
             "WHERE server_key = :key RETURNING server_key"), {**sets, "by": user, "key": server_key})
         ok = res.fetchone() is not None
         await db.commit()

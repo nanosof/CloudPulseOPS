@@ -155,13 +155,13 @@ def _n(v: Any) -> str:
 
 async def _latest_capacity(limit: int = 15) -> tuple[Optional[date], dict[str, list[dict]], list[dict]]:
     async with AsyncSessionLocal() as db:
-        day = (await db.execute(text("SELECT MAX(report_date) FROM cloudpulse_capacity_daily"))).scalar()
+        day = (await db.execute(text("SELECT MAX(report_date) FROM infraguardian_capacity_daily"))).scalar()
         if not day:
             return None, {}, []
         rows = (await db.execute(text("""
             SELECT server_name, avg_cpu_pct, max_cpu_pct, avg_mem_pct, max_mem_pct, avg_disk_pct, max_disk_pct,
                    total_mem_gb, total_disk_gb, free_disk_gb, os_name, host_ip
-            FROM cloudpulse_capacity_daily WHERE report_date = :d
+            FROM infraguardian_capacity_daily WHERE report_date = :d
         """), {"d": day})).fetchall()
     data = [{k: (float(v) if hasattr(v, "is_finite") else v) for k, v in r._mapping.items()} for r in rows]
     top = {m: sorted(data, key=lambda r: -(r.get(f"avg_{m}_pct") or 0))[:limit] for m in ("cpu", "mem", "disk")}
@@ -282,7 +282,7 @@ async def build_server_detail(filters: dict) -> dict:
         row = (await db.execute(text("""
             SELECT report_date, avg_cpu_pct, max_cpu_pct, avg_mem_pct, max_mem_pct, total_mem_gb, used_mem_gb,
                    avg_disk_pct, max_disk_pct, total_disk_gb, used_disk_gb, free_disk_gb, disk_details, os_name, host_ip
-            FROM cloudpulse_capacity_daily WHERE server_name = :s ORDER BY report_date DESC LIMIT 1
+            FROM infraguardian_capacity_daily WHERE server_name = :s ORDER BY report_date DESC LIMIT 1
         """), {"s": srv})).fetchone()
     cur = dict(row._mapping) if row else {}
     cur = {k: (float(v) if hasattr(v, "is_finite") else v) for k, v in cur.items()}
@@ -638,7 +638,7 @@ async def build_jira_summary(filters: dict) -> dict:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text("""
             SELECT ticket_key, summary, sr_type, status, created_by, effort_hours, created_at, ticket_url
-            FROM cloudpulse_jira_tickets
+            FROM infraguardian_jira_tickets
             WHERE created_at >= NOW() - make_interval(days => CAST(:d AS INTEGER))
             ORDER BY created_at DESC
         """), {"d": days})).fetchall()
@@ -1351,8 +1351,8 @@ def csv_bytes(s: dict) -> bytes:
 
 async def ensure_columns() -> None:
     async with AsyncSessionLocal() as db:
-        await db.execute(text("ALTER TABLE cloudpulse_report_history ADD COLUMN IF NOT EXISTS email_status TEXT"))
-        await db.execute(text("ALTER TABLE cloudpulse_report_history ADD COLUMN IF NOT EXISTS recipients TEXT"))
+        await db.execute(text("ALTER TABLE infraguardian_report_history ADD COLUMN IF NOT EXISTS email_status TEXT"))
+        await db.execute(text("ALTER TABLE infraguardian_report_history ADD COLUMN IF NOT EXISTS recipients TEXT"))
         await db.commit()
 
 
@@ -1388,7 +1388,7 @@ async def run_and_store(rtype: str, filters: dict, name: str, schedule_id: Optio
     duration = round(time.monotonic() - t0, 2)
     async with AsyncSessionLocal() as db:
         rid = (await db.execute(text("""
-            INSERT INTO cloudpulse_report_history
+            INSERT INTO infraguardian_report_history
                 (schedule_id, schedule_name, report_type, status, duration_seconds, row_count,
                  error_message, report_data, filters, recipients)
             VALUES (:sid, :name, :rtype, :status, :dur, :rows, :err, CAST(:data AS JSONB), CAST(:filt AS JSONB), :rcpt)
@@ -1397,13 +1397,13 @@ async def run_and_store(rtype: str, filters: dict, name: str, schedule_id: Optio
                "rows": row_count(d), "err": err, "data": json.dumps(d, default=str),
                "filt": json.dumps(filters or {}), "rcpt": recipients or ""})).scalar()
         if schedule_id:
-            await db.execute(text("UPDATE cloudpulse_scheduled_reports SET last_run_at = NOW() WHERE id = :id"), {"id": schedule_id})
+            await db.execute(text("UPDATE infraguardian_scheduled_reports SET last_run_at = NOW() WHERE id = :id"), {"id": schedule_id})
         await db.commit()
     email_status = None
     if status == "success" and send:
         email_status = await email_report(d, _recipients(recipients), rid)
         async with AsyncSessionLocal() as db:
-            await db.execute(text("UPDATE cloudpulse_report_history SET email_status = :e WHERE id = :id"),
+            await db.execute(text("UPDATE infraguardian_report_history SET email_status = :e WHERE id = :id"),
                              {"e": email_status, "id": rid})
             await db.commit()
     return {"ok": status == "success", "id": rid, "status": status, "error": err, "duration_seconds": duration,
@@ -1417,7 +1417,7 @@ async def run_due() -> int:
     async with AsyncSessionLocal() as db:
         due = (await db.execute(text("""
             SELECT id, name, report_type, filters, recipients, frequency, hour, minute, day_of_week, day_of_month
-            FROM cloudpulse_scheduled_reports
+            FROM infraguardian_scheduled_reports
             WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= NOW()
             ORDER BY next_run_at
         """))).fetchall()
@@ -1428,7 +1428,7 @@ async def run_due() -> int:
         log.info("Scheduled report #%d → %s, email: %s", s.id, res["status"], res["email_status"])
         nxt = _next_run(s.frequency, s.hour, s.minute, s.day_of_week, s.day_of_month)
         async with AsyncSessionLocal() as db:
-            await db.execute(text("UPDATE cloudpulse_scheduled_reports SET next_run_at = :n WHERE id = :id"),
+            await db.execute(text("UPDATE infraguardian_scheduled_reports SET next_run_at = :n WHERE id = :id"),
                              {"n": nxt, "id": s.id})
             await db.commit()
     return len(due)
