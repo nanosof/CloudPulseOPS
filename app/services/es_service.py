@@ -784,31 +784,38 @@ def _extract_caller(lockouts: list, failures: list) -> tuple[str, str]:
         m = _re.search(r"Caller\s+Computer\s+Name:\s*\\{0,2}([^\n\r\s]+)", msg, _re.I)
         return clean(m.group(1)) if m and m.group(1) else ""
 
-    # Layer 1 – CallerComputerName on 4740
+    # Layer 1 – TargetDomainName on 4740 (Elastic/Filebeat mapping: CallerComputerName → TargetDomainName)
     for h in lockouts:
-        v = clean((h.get("winlog") or {}).get("event_data", {}).get("CallerComputerName", ""))
-        if v:
-            return v, "CallerComputerName (Event 4740)"
+        eid = str((h.get("winlog") or {}).get("event_id", ""))
+        if eid == "4740":
+            v = clean((h.get("winlog") or {}).get("event_data", {}).get("TargetDomainName", ""))
+            # only accept if it looks like a machine name (not a plain domain like EMARATECH)
+            if v and ("." in v or "-" in v or len(v) > 8):
+                return v, "TargetDomainName (Event 4740 — Caller Computer Name)"
 
-    # Layer 2 – parse from message text
+    # Layer 2 – parse from message text ("Caller Computer Name:\tXXX")
     for h in lockouts:
         v = from_message(h.get("message", ""))
         if v:
             return v, "CallerComputerName (parsed from message)"
 
-    # Layer 3 – WorkstationName on 4625
+    # Layer 3 – explicit CallerComputerName field (some older Elastic versions)
+    for h in lockouts:
+        v = clean((h.get("winlog") or {}).get("event_data", {}).get("CallerComputerName", ""))
+        if v:
+            return v, "CallerComputerName (Event 4740)"
+
+    # Layer 4 – WorkstationName on 4625
     for h in failures:
         v = clean((h.get("winlog") or {}).get("event_data", {}).get("WorkstationName", ""))
         if v:
             return v, "WorkstationName (Event 4625)"
 
-    # Layer 4 – SubjectComputerName on 4740
+    # Layer 5 – SubjectComputerName / source.domain / host.hostname
     for h in lockouts:
         v = clean((h.get("winlog") or {}).get("event_data", {}).get("SubjectComputerName", ""))
         if v:
             return v, "SubjectComputerName (Event 4740)"
-
-    # Layer 5 – source.domain or host.hostname
     for h in lockouts + failures:
         v = clean(h.get("source", {}).get("domain", "") or (h.get("host") or {}).get("hostname", ""))
         if v:
@@ -839,9 +846,9 @@ def _burst_analysis(timestamps: list[str]) -> list[dict]:
     return [{"start": b[0], "end": b[-1], "count": len(b)} for b in bursts]
 
 
-async def get_lockout_events(hours: int = 24, username: str = "") -> Dict:
+async def get_lockout_events(hours: float = 24, username: str = "") -> Dict:
     """Overview: recent lockout events + per-account / DC / source summaries."""
-    hours = max(1, min(int(hours), 720))
+    hours = max(0.1, min(float(hours), 720))
     window = f"now-{hours}h"
 
     base_filter: list = [{"range": {"@timestamp": {"gte": window}}}]
@@ -895,14 +902,23 @@ async def get_lockout_events(hours: int = 24, username: str = "") -> Dict:
         acct = (ed.get("TargetUserName") or (s.get("user") or {}).get("target", {}).get("name")
                 or (s.get("related") or {}).get("user", [""])[0] if isinstance(
                     (s.get("related") or {}).get("user"), list) else ed.get("TargetUserName") or "")
-        caller = (ed.get("CallerComputerName") or ed.get("WorkstationName") or
-                  ed.get("SubjectMachineName") or "").replace("\\\\", "").strip("-").strip()
+        # For 4740: TargetDomainName = Caller Computer Name (Elastic/Filebeat field mapping)
+        if eid == "4740":
+            caller = ed.get("TargetDomainName", "").replace("\\\\", "").strip("-").strip()
+            if not caller or ("." not in caller and "-" not in caller and len(caller) <= 8):
+                # fall back to message parse
+                import re as _re2
+                msg = s.get("message", "")
+                m2 = _re2.search(r"Caller\s+Computer\s+Name:\s*\\{0,2}([^\n\r\t\s]+)", msg, _re2.I)
+                caller = m2.group(1).strip() if m2 and m2.group(1) else caller
+        else:
+            caller = (ed.get("CallerComputerName") or ed.get("WorkstationName") or
+                      ed.get("SubjectMachineName") or "").replace("\\\\", "").strip("-").strip()
         return {
             "timestamp": s.get("@timestamp", ""),
             "event_id": eid,
             "event_type": {"4740": "Lockout", "4625": "Failed Logon", "4771": "Kerberos Failure"}.get(eid, eid),
             "account": acct,
-            "domain": ed.get("TargetDomainName", ""),
             "caller_machine": caller,
             "logon_type": ed.get("LogonType", ""),
             "domain_controller": wl.get("computer_name", "") or (s.get("host") or {}).get("hostname", ""),
@@ -918,6 +934,10 @@ async def get_lockout_events(hours: int = 24, username: str = "") -> Dict:
         (e["timestamp"] for e in lockouts if e["account"] == k), "")}
         for k, v in by_acct.most_common(30)]
 
+    # Build source-machine summary from parsed events (TargetDomainName for 4740)
+    by_src = _Counter(e["caller_machine"] for e in lockouts if e.get("caller_machine"))
+    source_machines = [{"machine": k, "lockouts": v} for k, v in by_src.most_common(20)]
+
     return {
         "window_hours": hours,
         "total_lockout_events": len(lockouts),
@@ -926,8 +946,7 @@ async def get_lockout_events(hours: int = 24, username: str = "") -> Dict:
         "kerberos_failures": len([e for e in events if e["event_id"] == "4771"]),
         "events": events[:200],
         "by_account": unique_accounts,
-        "by_source_machine": [{"machine": b["key"], "count": b["doc_count"]}
-                               for b in (aggs.get("by_source") or {}).get("buckets", []) if b["key"].strip("-")],
+        "by_source_machine": source_machines,
         "by_dc": [{"dc": b["key"], "count": b["doc_count"]}
                   for b in (aggs.get("by_dc") or {}).get("buckets", [])],
         "failed_logon_timeline": [{"time": b["key_as_string"], "count": b["doc_count"]}
@@ -935,7 +954,7 @@ async def get_lockout_events(hours: int = 24, username: str = "") -> Dict:
     }
 
 
-async def get_user_lockout_triage(username: str, hours: int = 24) -> Dict:
+async def get_user_lockout_triage(username: str, hours: float = 24) -> Dict:
     """
     Full triage for one user: ES lockout/failure/Kerberos events + Azure AD sign-in correlation.
     Mirrors the n8n Account Lockout Agent workflow logic.
@@ -1084,8 +1103,16 @@ async def get_user_lockout_triage(username: str, hours: int = 24) -> Dict:
         wl = s.get("winlog") or {}
         ed = wl.get("event_data") or {}
         eid_v = str(wl.get("event_id", ""))
-        caller = (ed.get("CallerComputerName") or ed.get("WorkstationName") or
-                  ed.get("SubjectMachineName") or "").replace("\\\\", "").strip("-").strip()
+        if eid_v == "4740":
+            caller = ed.get("TargetDomainName", "").replace("\\\\", "").strip("-").strip()
+            if not caller or ("." not in caller and "-" not in caller and len(caller) <= 8):
+                import re as _re3
+                msg = s.get("message", "")
+                m3 = _re3.search(r"Caller\s+Computer\s+Name:\s*\\{0,2}([^\n\r\t\s]+)", msg, _re3.I)
+                caller = m3.group(1).strip() if m3 and m3.group(1) else caller
+        else:
+            caller = (ed.get("CallerComputerName") or ed.get("WorkstationName") or
+                      ed.get("SubjectMachineName") or "").replace("\\\\", "").strip("-").strip()
         return {
             "timestamp": s.get("@timestamp", ""),
             "event_id": eid_v,
