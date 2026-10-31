@@ -679,6 +679,10 @@ code,pre,.mono{font-family:var(--mono);font-size:.82rem}
         <span class="page-sub" id="dash-window">Live · last 60 min</span>
         <span id="dash-sync-time" style="font-size:.72rem;color:var(--text3);margin-left:8px"></span>
         <select class="form-select" style="width:130px" onchange="setDashWindow(this.value)">
+          <option value="1">Last 1 min</option>
+          <option value="5">Last 5 min</option>
+          <option value="10">Last 10 min</option>
+          <option value="15">Last 15 min</option>
           <option value="30">Last 30 min</option>
           <option value="60" selected>Last 60 min</option>
           <option value="120">Last 2 hrs</option>
@@ -1939,6 +1943,14 @@ function renderDashStats(dash) {
   ['cpu', 'memory', 'disk'].forEach(m => { dash[m] = (dash[m] || []).filter(s => s && !s.error); }); // ES errors come back as rows
   const fleet = dash.fleet || {};
   const total  = fleet.total || fleet.total_servers || 0;
+  const rep    = fleet.reporting || {};
+  const r1  = rep['1m']  ?? '—';
+  const r5  = rep['5m']  ?? '—';
+  const r10 = rep['10m'] ?? '—';
+  const r15 = rep['15m'] ?? '—';
+  // Agent health: % of fleet reporting in last 1 min (if DB total known)
+  const healthPct = (total > 0 && rep['1m'] != null) ? Math.round(rep['1m'] / total * 100) : null;
+  const healthSev = healthPct == null ? '' : healthPct >= 90 ? 'ok' : healthPct >= 70 ? 'warn' : 'crit';
   const cpuCrit = (dash.cpu  || []).filter(s=>s.severity==='critical').length;
   const memCrit = (dash.memory||[]).filter(s=>s.severity==='critical').length;
   const dskCrit = (dash.disk ||[]).filter(s=>s.severity==='critical').length;
@@ -1947,7 +1959,19 @@ function renderDashStats(dash) {
   const avgDisk = dash.disk?.length  ?(dash.disk.reduce((a,s)=>a+(s.avg||0),0)/dash.disk.length).toFixed(1) :0;
 
   document.getElementById('dash-stats').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Total Servers</div><div class="stat-val" style="color:var(--accent)">${total}</div><div class="stat-sub">Windows Server fleet</div></div>
+    <div class="stat-card">
+      <div class="stat-label">Total Servers</div>
+      <div class="stat-val" style="color:var(--accent)">${total}</div>
+      <div class="stat-sub">Windows Server fleet</div>
+    </div>
+    <div class="stat-card ${healthSev}">
+      <div class="stat-label">Reporting Now</div>
+      <div class="stat-val" style="color:var(--${healthSev==='ok'?'ok':healthSev==='warn'?'warn':'crit'})">${r1}</div>
+      <div class="stat-sub">${healthPct != null ? healthPct+'% of fleet · 1 min' : '1 min window'}</div>
+      <div style="font-size:.7rem;color:var(--text3);margin-top:5px;line-height:1.6">
+        5 min: <b>${r5}</b> &nbsp;·&nbsp; 10 min: <b>${r10}</b> &nbsp;·&nbsp; 15 min: <b>${r15}</b>
+      </div>
+    </div>
     <div class="stat-card ${sev(avgCpu)}"><div class="stat-label">Fleet Avg CPU</div><div class="stat-val">${avgCpu}%</div><div class="stat-sub">${cpuCrit} critical</div></div>
     <div class="stat-card ${sev(avgMem,85,95)}"><div class="stat-label">Fleet Avg Memory</div><div class="stat-val">${avgMem}%</div><div class="stat-sub">${memCrit} critical</div></div>
     <div class="stat-card ${sev(avgDisk)}"><div class="stat-label">Fleet Avg Disk</div><div class="stat-val">${avgDisk}%</div><div class="stat-sub">${dskCrit} critical</div></div>
