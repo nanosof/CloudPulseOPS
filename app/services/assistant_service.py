@@ -533,6 +533,251 @@ async def t_posture_summary(ds: Datasets, area: str = "all") -> dict:
     return out
 
 
+async def t_fleet_status(ds: Datasets, minutes: int = 60) -> dict:
+    """Live fleet dashboard: total Windows servers (DB), critical/warning/ok counts, reporting counts by time window."""
+    from app.services import es_service as es
+    minutes = minutes if minutes in (1, 5, 10, 15, 30, 60, 120, 240, 480, 1440) else 60
+    summary = await es.get_fleet_summary(minutes)
+    rep = summary.get("reporting", {})
+    rows = [
+        {"window": "1 min",  "reporting": rep.get("1m", 0)},
+        {"window": "5 min",  "reporting": rep.get("5m", 0)},
+        {"window": "10 min", "reporting": rep.get("10m", 0)},
+        {"window": "15 min", "reporting": rep.get("15m", 0)},
+    ]
+    total = summary.get("total", 0)
+    return {
+        "total_windows_servers": total,
+        "critical": summary.get("critical", 0),
+        "warning": summary.get("warning", 0),
+        "ok": summary.get("ok", 0),
+        "not_reporting": total - summary.get("critical", 0) - summary.get("warning", 0) - summary.get("ok", 0),
+        "window_minutes": minutes,
+        "reporting_by_window": ds.add("Reporting servers by time window (live)", rows),
+        "note": "critical = any metric ≥ 90%, warning = any metric ≥ 85%, ok = all below thresholds, total = DB count of monitored Windows Server OS only",
+    }
+
+
+async def t_es_lockouts(ds: Datasets, username: str = "", hours: int = 24, include_failures: bool = True) -> dict:
+    """
+    Query Elasticsearch for Windows account lockout events (Event ID 4740) and optionally
+    failed logon events (Event ID 4625) from the Windows Security event log.
+    Returns locked-out accounts, source computers, domain controllers, and timeline.
+    """
+    from app.services.es_service import _post, _get_conn
+    _url, _headers, _verify = await _get_conn()
+
+    window = f"now-{max(1, min(hours, 720))}h"
+    idx = "logs-system.security*,winlogbeat-*,logs-windows*"
+
+    def _lockout_query(uid: str = "") -> dict:
+        filters: list = [
+            {"range": {"@timestamp": {"gte": window}}},
+            {"terms": {"winlog.event_id": [4740]}},
+        ]
+        if uid:
+            filters.append({"wildcard": {"winlog.event_data.TargetUserName": f"*{uid}*"}})
+        return {
+            "size": 500,
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "query": {"bool": {"filter": filters}},
+            "_source": ["@timestamp", "winlog.event_id", "winlog.event_data.TargetUserName",
+                        "winlog.event_data.TargetDomainName", "winlog.event_data.SubjectUserName",
+                        "winlog.event_data.SubjectDomainName", "winlog.computer_name",
+                        "winlog.event_data.SubjectMachineName", "host.name", "host.hostname",
+                        "message"],
+        }
+
+    def _failures_query(uid: str = "") -> dict:
+        filters: list = [
+            {"range": {"@timestamp": {"gte": window}}},
+            {"terms": {"winlog.event_id": [4625]}},
+        ]
+        if uid:
+            filters.append({"wildcard": {"winlog.event_data.TargetUserName": f"*{uid}*"}})
+        return {
+            "size": 0,
+            "query": {"bool": {"filter": filters}},
+            "aggs": {
+                "by_user": {"terms": {"field": "winlog.event_data.TargetUserName.keyword", "size": 30,
+                                      "order": {"_count": "desc"}}},
+                "by_source": {"terms": {"field": "winlog.event_data.WorkstationName.keyword", "size": 20,
+                                        "order": {"_count": "desc"}}},
+                "timeline": {"date_histogram": {"field": "@timestamp", "calendar_interval": "1h"}},
+                "total": {"value_count": {"field": "winlog.event_id"}},
+            },
+        }
+
+    try:
+        lockout_r, failures_r = await asyncio.gather(
+            _post(f"/{idx}/_search?ignore_unavailable=true", _lockout_query(username)),
+            _post(f"/{idx}/_search?ignore_unavailable=true", _failures_query(username)) if include_failures else asyncio.sleep(0),
+        )
+    except Exception as e:
+        return {"error": f"Elasticsearch query failed: {e}. Check ES connection in Settings."}
+
+    def _src(hit: dict) -> dict:
+        s = hit.get("_source", {})
+        wl = s.get("winlog", {})
+        ed = wl.get("event_data", {})
+        return {
+            "timestamp": s.get("@timestamp", ""),
+            "event_id": wl.get("event_id", 4740),
+            "locked_account": ed.get("TargetUserName", ""),
+            "locked_domain": ed.get("TargetDomainName", ""),
+            "caller_machine": ed.get("SubjectMachineName", "") or ed.get("SubjectUserName", ""),
+            "domain_controller": wl.get("computer_name", "") or s.get("host", {}).get("hostname", ""),
+        }
+
+    lockout_hits = (lockout_r.get("hits") or {}).get("hits", []) if isinstance(lockout_r, dict) else []
+    lockout_rows = [_src(h) for h in lockout_hits]
+
+    # Summarise lockouts by user
+    by_user: Counter = Counter(r["locked_account"] for r in lockout_rows if r["locked_account"])
+    by_dc: Counter = Counter(r["domain_controller"] for r in lockout_rows if r["domain_controller"])
+    by_src: Counter = Counter(r["caller_machine"] for r in lockout_rows if r["caller_machine"])
+
+    out: dict = {
+        "window_hours": hours,
+        "total_lockout_events": len(lockout_rows),
+        "unique_accounts_locked": len(by_user),
+    }
+
+    if lockout_rows:
+        out["lockout_events"] = ds.add(
+            f"Account lockout events (Event 4740) — last {hours}h" + (f" — {username}" if username else ""),
+            lockout_rows,
+        )
+        out["lockouts_by_account"] = ds.add(
+            "Lockout count per account",
+            [{"account": u, "lockout_count": c} for u, c in by_user.most_common(20)],
+        )
+        out["lockouts_by_dc"] = ds.add(
+            "Lockouts recorded per domain controller",
+            [{"domain_controller": dc, "count": c} for dc, c in by_dc.most_common(10)],
+        )
+        out["lockouts_by_source_machine"] = ds.add(
+            "Lockout source machines (caller workstation)",
+            [{"machine": m, "count": c} for m, c in by_src.most_common(10)],
+        )
+    else:
+        out["message"] = f"No account lockout events (4740) found in Elasticsearch in the last {hours}h."
+
+    if include_failures and isinstance(failures_r, dict):
+        aggs = failures_r.get("aggregations", {})
+        fail_total = (aggs.get("total") or {}).get("value", 0)
+        fail_users = [{"account": b["key"], "failed_logon_count": b["doc_count"]}
+                      for b in (aggs.get("by_user") or {}).get("buckets", [])]
+        fail_srcs = [{"source_machine": b["key"], "count": b["doc_count"]}
+                     for b in (aggs.get("by_source") or {}).get("buckets", [])]
+        timeline = [{"hour": b["key_as_string"], "failed_logons": b["doc_count"]}
+                    for b in (aggs.get("timeline") or {}).get("buckets", []) if b["doc_count"] > 0]
+        out["failed_logons_total"] = fail_total
+        if fail_users:
+            out["failed_logons_by_account"] = ds.add(f"Top accounts with failed logons (Event 4625) — last {hours}h", fail_users)
+        if fail_srcs:
+            out["failed_logons_by_source"] = ds.add("Top source machines for failed logons", fail_srcs)
+        if timeline:
+            out["failed_logons_timeline"] = ds.add("Failed logons per hour", timeline)
+
+    return out
+
+
+async def t_es_windows_events(ds: Datasets, event_ids: str = "", host: str = "", message_contains: str = "",
+                               hours: int = 24, limit: int = 200) -> dict:
+    """
+    Search Windows event logs in Elasticsearch. Query by event ID(s), host, message text, or time window.
+    Useful for: failed services, application crashes, RDP events, policy changes, etc.
+    Returns matching events with timestamp, event_id, source, level and message.
+    """
+    from app.services.es_service import _post
+    idx = "logs-system.security*,logs-system.system*,logs-system.application*,winlogbeat-*,logs-windows*"
+    limit = max(1, min(int(limit or 200), 1000))
+    hours = max(1, min(int(hours or 24), 720))
+
+    filters: list = [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}]
+    if event_ids:
+        ids = [int(i.strip()) for i in event_ids.replace(",", " ").split() if i.strip().isdigit()]
+        if ids:
+            filters.append({"terms": {"winlog.event_id": ids}})
+    if host:
+        filters.append({"wildcard": {"host.name": f"*{host.lower()}*"}})
+    if message_contains:
+        filters.append({"match": {"message": message_contains}})
+
+    body = {
+        "size": limit,
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "query": {"bool": {"filter": filters}},
+        "_source": ["@timestamp", "winlog.event_id", "winlog.provider_name", "winlog.channel",
+                    "winlog.level", "winlog.computer_name", "host.name", "message",
+                    "winlog.event_data.TargetUserName", "winlog.event_data.SubjectUserName"],
+    }
+    try:
+        r = await _post(f"/{idx}/_search?ignore_unavailable=true", body)
+    except Exception as e:
+        return {"error": f"Elasticsearch query failed: {e}"}
+
+    hits = (r.get("hits") or {}).get("hits", [])
+    total = (r.get("hits") or {}).get("total", {}).get("value", len(hits))
+    rows = []
+    for h in hits:
+        s = h.get("_source", {})
+        wl = s.get("winlog", {})
+        ed = wl.get("event_data", {})
+        rows.append({
+            "timestamp": s.get("@timestamp", ""),
+            "event_id": wl.get("event_id", ""),
+            "level": wl.get("level", ""),
+            "channel": wl.get("channel", ""),
+            "provider": wl.get("provider_name", ""),
+            "host": s.get("host", {}).get("name", "") or wl.get("computer_name", ""),
+            "user": ed.get("TargetUserName", "") or ed.get("SubjectUserName", ""),
+            "message": (s.get("message") or "")[:300],
+        })
+    if not rows:
+        return {"total_hits": 0, "message": "No matching Windows events found in Elasticsearch."}
+    return {**ds.add(f"Windows events — last {hours}h" + (f" — Event {event_ids}" if event_ids else "")
+                     + (f" on {host}" if host else "") + (f" — '{message_contains}'" if message_contains else ""), rows),
+            "total_matching": total}
+
+
+async def t_capacity_alerts(ds: Datasets, server: str = "", severity: str = "", acknowledged: bool = False,
+                             limit: int = 100) -> dict:
+    """
+    Capacity/performance alerts stored in the database — threshold breaches for CPU, memory and disk.
+    These are the alerts shown in the Alerts console. Filter by server, severity (warn/crit) or status.
+    """
+    async with AsyncSessionLocal() as db:
+        where = ["1=1"]
+        params: dict = {}
+        if server:
+            where.append("LOWER(server_name) LIKE :srv")
+            params["srv"] = f"%{server.lower()}%"
+        if severity:
+            where.append("LOWER(severity) = :sev")
+            params["sev"] = severity.lower()
+        if not acknowledged:
+            where.append("(acknowledged = FALSE OR acknowledged IS NULL)")
+        params["lim"] = min(int(limit or 100), 500)
+        rows = (await db.execute(text(f"""
+            SELECT server_name, metric, value, severity, details, acknowledged, created_at
+            FROM infraguardian_alerts WHERE {' AND '.join(where)}
+            ORDER BY CASE severity WHEN 'crit' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, created_at DESC
+            LIMIT :lim
+        """), params)).fetchall()
+    if not rows:
+        return {"total": 0, "message": "No matching capacity alerts found."}
+    out = [{"server": r.server_name, "metric": r.metric, "value": float(r.value or 0),
+            "severity": r.severity, "details": r.details, "acknowledged": r.acknowledged,
+            "created_at": str(r.created_at)} for r in rows]
+    by_sev: Counter = Counter(r["severity"] for r in out)
+    by_srv: Counter = Counter(r["server"] for r in out)
+    result = ds.add(f"Capacity alerts" + (f" — {server}" if server else "") + (f" — {severity}" if severity else "")
+                    + (" (including acknowledged)" if acknowledged else ""), out)
+    return {**result, "by_severity": dict(by_sev.most_common()), "top_servers": dict(by_srv.most_common(10))}
+
+
 def _p(type_: str, desc: str, **extra) -> dict:
     return {"type": type_, "description": desc, **extra}
 
@@ -585,6 +830,26 @@ TOOLS: dict[str, tuple[Callable, str, dict, list, str]] = {
                          "server": _p("string", "Optional server / target text"), "category": _p("string", "Optional alert type")}, [], "💬 Reading Teams alert incidents"),
     "posture_summary": (t_posture_summary, "Overall security and/or identity posture: health scores, all findings, and every collected summary. Start here for broad 'how are we doing' questions.",
                         {"area": _p("string", "security / identity / all", enum=["security", "identity", "all"])}, [], "🧭 Reading overall posture"),
+    "fleet_status": (t_fleet_status, "Live fleet dashboard: total monitored Windows Server count (from DB), critical/warning/ok server counts and reporting server counts for 1/5/10/15 min windows. Use for 'how many servers are critical', 'how many are reporting', 'what does the dashboard show', fleet health overview.",
+                     {"minutes": _p("integer", "Severity look-back window in minutes (default 60)")}, [], "📡 Reading live fleet status"),
+    "es_lockouts": (t_es_lockouts, "Query Elasticsearch for Windows account lockout events (Event ID 4740) and failed logon events (Event ID 4625) from Windows Security event logs. Returns locked accounts, source machines, domain controllers and a failed-logon timeline. Use for any lockout, account lock, bad password, failed sign-in question that is NOT about Entra/Azure but about on-prem Windows / Active Directory.",
+                    {"username": _p("string", "Optional: filter by account name (partial match)"),
+                     "hours": _p("integer", "Look-back window in hours (default 24, max 720)"),
+                     "include_failures": _p("boolean", "Also return failed logon (4625) summary — default true")},
+                    [], "🔐 Querying ES for account lockouts"),
+    "es_windows_events": (t_es_windows_events, "Search Windows event logs in Elasticsearch by event ID(s), host, message text and/or time window (Security, System, Application channels). Use for: failed services, application errors, RDP sessions, policy changes, custom event IDs, any on-prem Windows log question.",
+                          {"event_ids": _p("string", "Comma-separated event IDs e.g. '4740,4625' or '7045'"),
+                           "host": _p("string", "Partial host/server name filter"),
+                           "message_contains": _p("string", "Text that must appear in the event message"),
+                           "hours": _p("integer", "Look-back window in hours (default 24)"),
+                           "limit": _p("integer", "Max events to return (default 200, max 1000)")},
+                          [], "📋 Searching Windows event logs in ES"),
+    "capacity_alerts": (t_capacity_alerts, "Capacity and performance alerts stored in the database — CPU, memory and disk threshold breaches for all servers. These are what the Alerts console shows. Use for 'how many alerts', 'which servers are alerting', 'show me critical alerts'.",
+                        {"server": _p("string", "Optional server name filter"),
+                         "severity": _p("string", "warn or crit"),
+                         "acknowledged": _p("boolean", "Include acknowledged alerts — default false (unacknowledged only)"),
+                         "limit": _p("integer", "Max rows — default 100")},
+                        [], "🚨 Reading capacity alerts"),
 }
 
 
@@ -601,17 +866,48 @@ async def _system_prompt() -> str:
     projects = ", ".join(p["project"] for p in await inv.projects())
     now = datetime.now(GST).strftime("%A %d %B %Y %H:%M")
     org_name = await cfg.get("org.name", "your organisation")
-    return f"""You are CloudPulse Assistant, the AI assistant inside CloudPulse — the Windows infrastructure & security operations platform of {org_name}.
+    return f"""You are CloudPulse Assistant, the AI assistant inside CloudPulse — the Windows infrastructure, identity & security operations platform of {org_name}.
 Current time: {now} GST (Asia/Dubai). Users are infrastructure, security and identity engineers.
 
-You can see: 241 monitored Windows servers (live metrics & processes from Elastic, daily capacity history, forecasts), the server inventory with projects ({projects}),
-Microsoft Entra ID (users, MFA, admins, app secrets, sign-ins, licences, groups), Microsoft Defender XDR (incidents, alerts, devices, vulnerabilities, missing patches,
-antivirus, secure configuration), Secure Score, Intune, Identity Protection, Microsoft 365 service health, and Teams alert incidents.
+## What you can see and answer about
+
+**Elasticsearch (live on-prem Windows data)**
+- Fleet dashboard: total monitored Windows Server count, critical/warning/ok severity breakdown, reporting counts by 1/5/10/15 min windows → fleet_status
+- Live CPU, memory, disk, network metrics for all servers — top servers by any metric → top_servers
+- Live top processes (CPU/memory) on any server → top_processes
+- Full live + forecast + Defender + incidents snapshot for one server → server_overview
+- Windows Security / System / Application event logs: lockout events (4740), failed logons (4625), RDP events, service failures, any Event ID → es_lockouts / es_windows_events
+- Account lockout console: which accounts are locked, from which machine, on which DC, how many failed logons → es_lockouts
+
+**Server inventory & capacity**
+- Full Windows server inventory: {projects} — IP, OS, vCPU, memory, disk, application, owner, criticality, site → find_servers
+- Daily capacity history (CPU/mem/disk %) for any server, project or the whole fleet → capacity_history
+- 30/90/180/365-day capacity forecasts in absolute GB/vCPU, days to 90%/full, servers under pressure → capacity_forecast / project_summary
+- Capacity threshold alerts (warn/crit) stored in the database → capacity_alerts
+
+**Microsoft Entra ID & Identity**
+- Live user lookup: account status, MFA, sign-in activity, licences, admin roles, groups, Identity Protection risk → entra_user
+- Identity reports: MFA gaps, stale accounts, privileged assignments, app secrets, failed sign-ins, licence usage, audit changes, CA policies → identity_report
+- Topics: {', '.join(IDENTITY_TOPICS.keys())}
+
+**Microsoft Defender & Security**
+- Device vulnerabilities (CVEs), missing patches (months behind), antivirus status, secure config failures → security_report / defender_device
+- Open Defender incidents and alerts, risky users, risk detections → security_report
+- Secure Score trend and improvement actions → security_report
+- Intune compliance and encryption status → security_report
+- Microsoft 365 service health and message centre → security_report
+- End-of-support software, exploitable CVEs → security_report
+- Advanced hunting (KQL) for anything not covered above → hunting_query
+- Overall posture health score (security + identity combined) → posture_summary
+
+**Teams alert incidents**
+- Active and cleared alert incidents from the Teams monitoring channel (CPU, memory, disk, availability spikes) → teams_incidents
 
 RULES
 - Always get facts from tools; never invent servers, processes, numbers, users or dates. If a tool returns an error or no data, say so plainly.
+- For lockout or failed logon questions: always use es_lockouts (on-prem Windows / Active Directory events from Elasticsearch), not entra_user. Use entra_user only for Entra/Azure AD account questions.
 - Earlier answers in this conversation contain NO raw data. For every new question — including follow-ups like "what about the first one?" —
-  call the tools again (resolve "the first one" etc. from the conversation, then query it). Only answer without tools for greetings or
+  call the tools again (resolve "the first one" from the conversation, then query it). Only answer without tools for greetings or
   general explanations that need no environment data.
 - Call several tools in one step when they are independent. Use the most specific tool; hunting_query only as a last resort.
 - You are read-only: you cannot change anything. When useful, recommend concrete next steps.
@@ -623,7 +919,7 @@ RULES
   Only use the marker options shown (cols, type, x, y, title) with column names that exist in that dataset. Filter with tool arguments, not in markers.
 - For counts and totals use the tools' total_rows / totals fields — never count preview rows (the preview is only the first rows).
 - Answer in concise, well-structured Markdown: a one-line direct answer first, then key numbers (bold), then tables/charts, then brief recommendations.
-- Mention data freshness when it matters (live vs. last collection). Use GST times. Keep units explicit (vCPU, GB, %)."""
+- Mention data freshness when it matters (live vs. last collection vs. daily aggregate). Use GST times. Keep units explicit (vCPU, GB, %)."""
 
 
 async def _llm(messages: list[dict], tools: bool = True) -> dict:
