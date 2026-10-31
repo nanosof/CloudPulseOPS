@@ -856,30 +856,35 @@ async def get_lockout_events(hours: float = 24, username: str = "") -> Dict:
     if short_u:
         base_filter.append(_user_filter(short_u))
 
+    # event.code is keyword (string "4740") — reliable across all Elastic Agent versions.
+    # winlog.event_id is long in EA 8.x — use integers. Both in should for max compat.
+    _event_filter = {"bool": {"should": [
+        {"terms": {"event.code":    ["4740", "4625", "4771"]}},
+        {"terms": {"winlog.event_id": [4740, 4625, 4771]}},
+    ], "minimum_should_match": 1}}
+
     events_body = {
         "size": 500,
         "sort": [{"@timestamp": {"order": "desc"}}],
-        "query": {"bool": {"filter": base_filter,
-                           "must": [{"terms": {"winlog.event_id": ["4740", "4625", "4771"]}}]}},
-        "_source": ["@timestamp", "winlog.event_id", "winlog.event_data.TargetUserName",
-                    "winlog.event_data.TargetDomainName", "winlog.event_data.CallerComputerName",
-                    "winlog.event_data.WorkstationName", "winlog.event_data.SubjectMachineName",
-                    "winlog.event_data.LogonType", "winlog.computer_name",
-                    "user.target.name", "related.user", "host.hostname", "message"],
+        "query": {"bool": {"filter": base_filter + [_event_filter]}},
+        "_source": ["@timestamp", "event.code", "event.action", "winlog.event_id",
+                    "winlog.event_data.TargetUserName", "winlog.event_data.TargetDomainName",
+                    "winlog.event_data.CallerComputerName", "winlog.event_data.WorkstationName",
+                    "winlog.event_data.SubjectMachineName", "winlog.event_data.LogonType",
+                    "winlog.computer_name", "user.target.name", "related.user",
+                    "host.hostname", "message"],
     }
     aggs_body = {
         "size": 0,
-        "query": {"bool": {"filter": base_filter,
-                           "must": [{"terms": {"winlog.event_id": ["4740", "4625", "4771"]}}]}},
+        "query": {"bool": {"filter": base_filter + [_event_filter]}},
         "aggs": {
-            "by_user":    {"terms": {"field": "winlog.event_data.TargetUserName.keyword", "size": 30,
-                                      "order": {"_count": "desc"}}},
-            "by_source":  {"terms": {"field": "winlog.event_data.WorkstationName.keyword", "size": 20}},
-            "by_dc":      {"terms": {"field": "winlog.computer_name.keyword", "size": 10}},
-            "by_event":   {"terms": {"field": "winlog.event_id", "size": 5}},
-            "timeline":   {"date_histogram": {"field": "@timestamp",
-                                               "calendar_interval": "1h" if hours <= 72 else "1d",
-                                               "min_doc_count": 1}},
+            "by_user":  {"terms": {"field": "winlog.event_data.TargetUserName.keyword", "size": 30,
+                                   "order": {"_count": "desc"}}},
+            "by_dc":    {"terms": {"field": "winlog.computer_name.keyword", "size": 10}},
+            "by_event": {"terms": {"field": "event.code", "size": 5}},
+            "timeline": {"date_histogram": {"field": "@timestamp",
+                                            "calendar_interval": "1h" if hours <= 72 else "1d",
+                                            "min_doc_count": 1}},
         },
     }
 
@@ -899,7 +904,8 @@ async def get_lockout_events(hours: float = 24, username: str = "") -> Dict:
         s = h.get("_source", {})
         wl = s.get("winlog") or {}
         ed = wl.get("event_data") or {}
-        eid = str(wl.get("event_id", ""))
+        # event.code (keyword) is more reliable than winlog.event_id (long)
+        eid = str((s.get("event") or {}).get("code") or wl.get("event_id", ""))
         acct = (ed.get("TargetUserName") or (s.get("user") or {}).get("target", {}).get("name")
                 or (s.get("related") or {}).get("user", [""])[0] if isinstance(
                     (s.get("related") or {}).get("user"), list) else ed.get("TargetUserName") or "")
@@ -972,14 +978,15 @@ async def get_user_lockout_triage(username: str, hours: float = 24) -> Dict:
             "must": [
                 _user_filter(short_user),
                 {"bool": {"should": [
-                    {"terms": {"winlog.event_id": ["4740", "4625", "4771"]}},
+                    {"terms": {"event.code":      ["4740", "4625", "4771"]}},
+                    {"terms": {"winlog.event_id": [4740, 4625, 4771]}},
                     {"terms": {"event.action": ["locked-out-user-account",
                                                 "logon-failed",
                                                 "kerberos-pre-authentication-failed"]}},
                 ], "minimum_should_match": 1}},
             ],
         }},
-        "_source": ["@timestamp", "winlog.event_id", "event.action",
+        "_source": ["@timestamp", "event.code", "event.action", "winlog.event_id",
                     "winlog.event_data.TargetUserName", "winlog.event_data.TargetDomainName",
                     "winlog.event_data.CallerComputerName", "winlog.event_data.WorkstationName",
                     "winlog.event_data.SubjectComputerName", "winlog.event_data.SubjectMachineName",
@@ -1103,7 +1110,7 @@ async def get_user_lockout_triage(username: str, hours: float = 24) -> Dict:
     def _row(s: dict) -> dict:
         wl = s.get("winlog") or {}
         ed = wl.get("event_data") or {}
-        eid_v = str(wl.get("event_id", ""))
+        eid_v = str((s.get("event") or {}).get("code") or wl.get("event_id", ""))
         if eid_v == "4740":
             caller = ed.get("TargetDomainName", "").replace("\\\\", "").strip("-").strip()
             if not caller or ("." not in caller and "-" not in caller and len(caller) <= 8):
