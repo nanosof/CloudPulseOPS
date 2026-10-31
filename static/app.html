@@ -2123,7 +2123,7 @@ function renderTop20Table(servers, metric) {
   const rows = servers.map((s, i) => {
     const val = s.avg || 0;
     const sClass = sev(val, isMemory ? 85 : 80, 90);
-    return `<tr onclick="openServerModal('${s.server}')" style="cursor:pointer">
+    return `<tr onclick="openServerModal('${s.server}','${metric}')" style="cursor:pointer">
       <td style="color:var(--text3)">${i+1}</td>
       <td><strong>${s.server}</strong></td>
       <td>${s.os_name || 'Windows Server'}</td>

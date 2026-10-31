@@ -403,7 +403,14 @@ code, pre, .mono, .ad-tbl .mono { font-family: var(--mono); }
   box-shadow: 0 0 0 3px rgba(0, 120, 212, .18), var(--glass-sheen);
   outline: none;
 }
-.form-select option { background: var(--surface); color: var(--text); }
+.form-select { color-scheme: dark; }
+.form-select option { background: #0f2040; color: #e8f0fe; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .form-select { color-scheme: light; }
+  :root:not([data-theme="dark"]) .form-select option { background: #ffffff; color: #0d1a2e; }
+}
+:root[data-theme="light"] .form-select { color-scheme: light; }
+:root[data-theme="light"] .form-select option { background: #ffffff; color: #0d1a2e; }
 .form-label { text-transform: none; letter-spacing: 0; font-size: .78rem; color: var(--text2); }
 
 /* ── tables ────────────────────────────────────────────────────────── */
