@@ -851,9 +851,10 @@ async def get_lockout_events(hours: float = 24, username: str = "") -> Dict:
     hours = max(0.1, min(float(hours), 720))
     window = f"now-{hours}h"
 
+    short_u = username.split("@")[0].strip() if username else ""
     base_filter: list = [{"range": {"@timestamp": {"gte": window}}}]
-    if username:
-        base_filter.append(_user_filter(username))
+    if short_u:
+        base_filter.append(_user_filter(short_u))
 
     events_body = {
         "size": 500,

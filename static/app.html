@@ -6001,7 +6001,9 @@ function lockoutFilterRender() {
 }
 
 function lockoutRenderList() {
-  const filter = (document.getElementById('lo-search').value || '').toLowerCase();
+  const raw = (document.getElementById('lo-search').value || '').toLowerCase();
+  // strip @domain so "PA2316@emaratech.ae" matches "PA2316" stored in ES
+  const filter = raw.split('@')[0].trim();
   const accounts = (_loData?.by_account || []).filter(a =>
     !filter || a.account.toLowerCase().includes(filter));
   const list = document.getElementById('lo-account-list');
